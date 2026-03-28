@@ -641,7 +641,7 @@ impl std::fmt::Display for SyncStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::{Address, Block};
+    use lattice_core::Block;
 
     fn genesis_hash() -> Hash {
         Block::genesis().hash()

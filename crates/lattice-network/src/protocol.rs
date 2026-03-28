@@ -472,7 +472,6 @@ impl NetworkBehavior {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::Address;
 
     #[test]
     fn test_gossip_message_serialization() {

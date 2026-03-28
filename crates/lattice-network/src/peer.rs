@@ -450,10 +450,12 @@ mod tests {
 
     #[test]
     fn test_connection_limits() {
-        let mut config = PeerConfig::default();
-        config.max_peers = 2;
-        config.max_inbound = 1;
-        config.max_outbound = 1;
+        let config = PeerConfig {
+            max_peers: 2,
+            max_inbound: 1,
+            max_outbound: 1,
+            ..PeerConfig::default()
+        };
 
         let manager = PeerManager::new(config);
 

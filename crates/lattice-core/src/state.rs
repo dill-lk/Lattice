@@ -147,9 +147,9 @@ impl State {
         for addr in addrs {
             let account = &self.accounts[addr];
             hasher.update(addr.as_bytes());
-            hasher.update(&account.balance.to_le_bytes());
-            hasher.update(&account.nonce.to_le_bytes());
-            hasher.update(&account.code_hash);
+            hasher.update(account.balance.to_le_bytes());
+            hasher.update(account.nonce.to_le_bytes());
+            hasher.update(account.code_hash);
         }
         
         let mut hash = [0u8; 32];

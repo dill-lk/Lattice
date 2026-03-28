@@ -78,67 +78,60 @@ pub struct Receipt {
     pub output: Vec<u8>,
 }
 
+/// Parameters for creating a receipt
+#[derive(Debug, Clone)]
+pub struct ReceiptParams {
+    pub transaction_hash: Hash,
+    pub block_hash: Hash,
+    pub block_height: BlockHeight,
+    pub transaction_index: u32,
+    pub from: Address,
+    pub to: Option<Address>,
+    pub gas_used: u64,
+    pub effective_gas_price: Amount,
+    pub cumulative_gas_used: u64,
+    pub post_state_root: Hash,
+}
+
 impl Receipt {
     /// Create a successful receipt
-    pub fn success(
-        transaction_hash: Hash,
-        block_hash: Hash,
-        block_height: BlockHeight,
-        transaction_index: u32,
-        from: Address,
-        to: Option<Address>,
-        gas_used: u64,
-        effective_gas_price: Amount,
-        cumulative_gas_used: u64,
-        post_state_root: Hash,
-    ) -> Self {
+    pub fn success(params: ReceiptParams) -> Self {
         Self {
-            transaction_hash,
-            block_hash,
-            block_height,
-            transaction_index,
-            from,
-            to,
+            transaction_hash: params.transaction_hash,
+            block_hash: params.block_hash,
+            block_height: params.block_height,
+            transaction_index: params.transaction_index,
+            from: params.from,
+            to: params.to,
             contract_address: None,
-            gas_used,
-            effective_gas_price,
-            cumulative_gas_used,
+            gas_used: params.gas_used,
+            effective_gas_price: params.effective_gas_price,
+            cumulative_gas_used: params.cumulative_gas_used,
             status: 1,
             logs: Vec::new(),
             logs_bloom: [0u8; 256],
-            post_state_root,
+            post_state_root: params.post_state_root,
             output: Vec::new(),
         }
     }
 
     /// Create a failed receipt
-    pub fn failed(
-        transaction_hash: Hash,
-        block_hash: Hash,
-        block_height: BlockHeight,
-        transaction_index: u32,
-        from: Address,
-        to: Option<Address>,
-        gas_used: u64,
-        effective_gas_price: Amount,
-        cumulative_gas_used: u64,
-        post_state_root: Hash,
-    ) -> Self {
+    pub fn failed(params: ReceiptParams) -> Self {
         Self {
-            transaction_hash,
-            block_hash,
-            block_height,
-            transaction_index,
-            from,
-            to,
+            transaction_hash: params.transaction_hash,
+            block_hash: params.block_hash,
+            block_height: params.block_height,
+            transaction_index: params.transaction_index,
+            from: params.from,
+            to: params.to,
             contract_address: None,
-            gas_used,
-            effective_gas_price,
-            cumulative_gas_used,
+            gas_used: params.gas_used,
+            effective_gas_price: params.effective_gas_price,
+            cumulative_gas_used: params.cumulative_gas_used,
             status: 0,
             logs: Vec::new(),
             logs_bloom: [0u8; 256],
-            post_state_root,
+            post_state_root: params.post_state_root,
             output: Vec::new(),
         }
     }
@@ -339,10 +332,8 @@ impl LogFilter {
         }
 
         // Check addresses (OR logic)
-        if !self.addresses.is_empty() {
-            if !self.addresses.contains(&log.address) {
-                return false;
-            }
+        if !self.addresses.is_empty() && !self.addresses.contains(&log.address) {
+            return false;
         }
 
         // Check topics (OR within position, AND between positions)
@@ -370,18 +361,18 @@ mod tests {
 
     #[test]
     fn test_receipt_success() {
-        let receipt = Receipt::success(
-            [1u8; 32],
-            [2u8; 32],
-            100,
-            0,
-            Address::from_bytes([1u8; 20]),
-            Some(Address::from_bytes([2u8; 20])),
-            21000,
-            1,
-            21000,
-            [3u8; 32],
-        );
+        let receipt = Receipt::success(ReceiptParams {
+            transaction_hash: [1u8; 32],
+            block_hash: [2u8; 32],
+            block_height: 100,
+            transaction_index: 0,
+            from: Address::from_bytes([1u8; 20]),
+            to: Some(Address::from_bytes([2u8; 20])),
+            gas_used: 21000,
+            effective_gas_price: 1,
+            cumulative_gas_used: 21000,
+            post_state_root: [3u8; 32],
+        });
 
         assert!(receipt.is_success());
         assert_eq!(receipt.gas_used, 21000);
@@ -390,18 +381,18 @@ mod tests {
 
     #[test]
     fn test_receipt_failed() {
-        let receipt = Receipt::failed(
-            [1u8; 32],
-            [2u8; 32],
-            100,
-            0,
-            Address::from_bytes([1u8; 20]),
-            Some(Address::from_bytes([2u8; 20])),
-            5000,
-            1,
-            5000,
-            [3u8; 32],
-        );
+        let receipt = Receipt::failed(ReceiptParams {
+            transaction_hash: [1u8; 32],
+            block_hash: [2u8; 32],
+            block_height: 100,
+            transaction_index: 0,
+            from: Address::from_bytes([1u8; 20]),
+            to: Some(Address::from_bytes([2u8; 20])),
+            gas_used: 5000,
+            effective_gas_price: 1,
+            cumulative_gas_used: 5000,
+            post_state_root: [3u8; 32],
+        });
 
         assert!(!receipt.is_success());
         assert_eq!(receipt.status, 0);
@@ -426,18 +417,18 @@ mod tests {
 
     #[test]
     fn test_bloom_filter() {
-        let mut receipt = Receipt::success(
-            [1u8; 32],
-            [2u8; 32],
-            100,
-            0,
-            Address::from_bytes([1u8; 20]),
-            None,
-            21000,
-            1,
-            21000,
-            [3u8; 32],
-        );
+        let mut receipt = Receipt::success(ReceiptParams {
+            transaction_hash: [1u8; 32],
+            block_hash: [2u8; 32],
+            block_height: 100,
+            transaction_index: 0,
+            from: Address::from_bytes([1u8; 20]),
+            to: None,
+            gas_used: 21000,
+            effective_gas_price: 1,
+            cumulative_gas_used: 21000,
+            post_state_root: [3u8; 32],
+        });
 
         let address = Address::from_bytes([10u8; 20]);
         let log = Log::new(

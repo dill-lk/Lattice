@@ -38,7 +38,7 @@ impl Address {
         
         // Add checksum (first 4 bytes of double SHA3)
         let hash1 = Sha3_256::digest(&versioned);
-        let hash2 = Sha3_256::digest(&hash1);
+        let hash2 = Sha3_256::digest(hash1);
         versioned.extend_from_slice(&hash2[..4]);
         
         bs58::encode(versioned).into_string()
@@ -56,8 +56,8 @@ impl Address {
 
         // Verify checksum
         let hash1 = Sha3_256::digest(&bytes[..21]);
-        let hash2 = Sha3_256::digest(&hash1);
-        if &bytes[21..] != &hash2[..4] {
+        let hash2 = Sha3_256::digest(hash1);
+        if bytes[21..] != hash2[..4] {
             return Err(AddressError::InvalidChecksum);
         }
 

@@ -294,7 +294,7 @@ pub fn validate_merkle_root(block: &Block) -> Result<()> {
 }
 
 /// Validate all transactions in a block
-pub fn validate_block_transactions(block: &Block, state: &State) -> Result<()> {
+pub fn validate_block_transactions(block: &Block, _state: &State) -> Result<()> {
     // Check for duplicate transactions
     let mut tx_hashes = std::collections::HashSet::new();
     

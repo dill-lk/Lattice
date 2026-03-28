@@ -86,11 +86,11 @@ impl Block {
             let mut next_level = Vec::new();
             for chunk in hashes.chunks(2) {
                 let mut hasher = Sha3_256::new();
-                hasher.update(&chunk[0]);
+                hasher.update(chunk[0]);
                 if chunk.len() > 1 {
-                    hasher.update(&chunk[1]);
+                    hasher.update(chunk[1]);
                 } else {
-                    hasher.update(&chunk[0]); // Duplicate last if odd
+                    hasher.update(chunk[0]); // Duplicate last if odd
                 }
                 let mut hash = [0u8; 32];
                 hash.copy_from_slice(&hasher.finalize());
@@ -140,8 +140,8 @@ fn difficulty_to_target(difficulty: u64) -> [u8; 32] {
 
     // Simplified calculation for demonstration
     let leading_zeros = (difficulty as f64).log2() as usize / 8;
-    for i in leading_zeros..32 {
-        result[i] = 0xFF / (difficulty as u8).max(1);
+    for byte in result.iter_mut().skip(leading_zeros) {
+        *byte = 0xFF / (difficulty as u8).max(1);
     }
     
     result

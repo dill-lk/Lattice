@@ -1,0 +1,42 @@
+[package]
+name = "lattice-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "lattice-node"
+path = "src/main.rs"
+
+[dependencies]
+# Internal crates
+lattice-core = { workspace = true }
+lattice-crypto = { workspace = true }
+lattice-consensus = { workspace = true }
+lattice-network = { workspace = true }
+lattice-storage = { workspace = true }
+lattice-rpc = { workspace = true }
+lattice-vm = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+borsh = { workspace = true }
+toml = "0.8"
+
+# Utils
+hex = { workspace = true }
+parking_lot = { workspace = true }
+dirs = "5.0"

@@ -1,0 +1,16 @@
+[package]
+name = "lattice-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lattice-crypto = { workspace = true }
+serde = { workspace = true }
+borsh = { workspace = true }
+sha3 = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

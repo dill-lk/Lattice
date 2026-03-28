@@ -1,0 +1,38 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.db-journal
+
+# Logs
+*.log
+logs/
+
+# Node data
+.lattice/
+data/
+
+# Keys (never commit!)
+*.key
+*.pem
+wallet.json
+keystore/
+
+# Test artifacts
+*.profraw
+coverage/
+
+# Cargo lock for libraries (keep for binaries)
+# Cargo.lock

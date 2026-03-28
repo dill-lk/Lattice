@@ -1,3 +1,4 @@
+#![allow(clippy::manual_is_multiple_of)]
 //! Lattice Core - Fundamental blockchain types and logic
 //!
 //! This crate provides the core primitives for the Lattice blockchain:

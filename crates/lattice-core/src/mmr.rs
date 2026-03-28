@@ -130,7 +130,7 @@ impl MerkleMountainRange {
         let mut pos = self.leaf_index_to_mmr_index(proof.leaf_index as usize);
         
         for sibling in &proof.sibling_hashes {
-            let is_right = (pos / (1 << height)).is_multiple_of(2);
+            let is_right = (pos / (1 << height)) % 2 == 0;
             current = if is_right {
                 hash_pair(&current, sibling)
             } else {
@@ -155,7 +155,7 @@ impl MerkleMountainRange {
     fn find_peak_to_merge(&self, height: u32) -> Option<Hash> {
         // Check if there's a peak at this height that can be merged
         let peak_size = 1u64 << (height + 1);
-        if self.size.is_multiple_of(peak_size) && self.size > 0 {
+        if self.size % peak_size == 0 && self.size > 0 {
             // Find the peak
             let peak_pos = self.size - peak_size;
             let peak_mmr_index = self.leaf_index_to_mmr_index(peak_pos as usize);
@@ -221,7 +221,7 @@ impl MerkleMountainRange {
             return None;
         }
         
-        if pos.is_multiple_of(2) {
+        if pos % 2 == 0 {
             Some(pos - 1)
         } else {
             Some(pos + 1)

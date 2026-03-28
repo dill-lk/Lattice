@@ -134,7 +134,7 @@ impl MerkleTree {
         // Traverse from leaf to root
         for level_index in 0..self.nodes.len() - 1 {
             let level = &self.nodes[level_index];
-            let sibling_index = if current_index.is_multiple_of(2) {
+            let sibling_index = if current_index % 2 == 0 {
                 current_index + 1
             } else {
                 current_index - 1

@@ -7,10 +7,16 @@ license.workspace = true
 [dependencies]
 lattice-crypto = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 borsh = { workspace = true }
 sha3 = { workspace = true }
 thiserror = { workspace = true }
 hex = { workspace = true }
+bs58 = { workspace = true }
+parking_lot = { workspace = true }
+num_cpus = { workspace = true }
+rustc_version_runtime = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+tokio = { workspace = true }

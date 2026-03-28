@@ -1,6 +1,6 @@
 //! Block types for Lattice blockchain
 
-use crate::{Address, Amount, BlockHeight, Hash, Signature, Timestamp, Transaction};
+use crate::{Address, Amount, BlockHeight, Hash, Timestamp, Transaction};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};

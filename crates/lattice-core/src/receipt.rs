@@ -4,6 +4,44 @@ use crate::{Address, Amount, BlockHeight, Hash};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
+/// Custom serde support for [u8; 256] bloom filter field.
+mod bloom_serde {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bloom: &[u8; 256], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(bloom)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 256], D::Error> {
+        use serde::de::{Error, SeqAccess, Visitor};
+        struct BloomVisitor;
+        impl<'de> Visitor<'de> for BloomVisitor {
+            type Value = [u8; 256];
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "a byte array of length 256")
+            }
+            fn visit_bytes<E: Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+                if v.len() != 256 {
+                    return Err(E::custom(format!("expected 256 bytes, got {}", v.len())));
+                }
+                let mut arr = [0u8; 256];
+                arr.copy_from_slice(v);
+                Ok(arr)
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut arr = [0u8; 256];
+                for (i, byte) in arr.iter_mut().enumerate() {
+                    *byte = seq.next_element()?.ok_or_else(|| {
+                        A::Error::custom(format!("expected element at index {}", i))
+                    })?;
+                }
+                Ok(arr)
+            }
+        }
+        deserializer.deserialize_bytes(BloomVisitor)
+    }
+}
+
 /// Transaction receipt containing execution results
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 pub struct Receipt {
@@ -32,6 +70,7 @@ pub struct Receipt {
     /// Logs/events emitted
     pub logs: Vec<Log>,
     /// Bloom filter for efficient log searching
+    #[serde(with = "bloom_serde")]
     pub logs_bloom: [u8; 256],
     /// State root after this transaction
     pub post_state_root: Hash,
@@ -119,7 +158,7 @@ impl Receipt {
     /// Update bloom filter with log data
     fn update_bloom(&mut self, log: &Log) {
         // Add address to bloom
-        self.bloom_add(&log.address.as_bytes());
+        self.bloom_add(log.address.as_bytes());
         
         // Add topics to bloom
         for topic in &log.topics {

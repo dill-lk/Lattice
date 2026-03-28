@@ -3,7 +3,7 @@
 //! Provides comprehensive health monitoring and diagnostics
 
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Health check status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 //! Address type for Lattice blockchain
 
-use crate::{Hash, PublicKey};
+use crate::PublicKey;
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
@@ -8,7 +8,7 @@ use sha3::{Digest, Sha3_256};
 /// Address derived from a Dilithium public key
 /// 
 /// Format: SHA3-256(public_key)[0..20] (20 bytes)
-#[derive(Debug, Clone, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 pub struct Address([u8; 20]);
 
 impl Address {

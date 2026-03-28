@@ -172,7 +172,7 @@ pub fn difficulty_multiplier(difficulty: u64) -> f64 {
 pub fn estimated_hashes_for_difficulty(difficulty: u64) -> u64 {
     // Expected attempts = 2^(leading_zero_bits)
     let leading_zero_bits = 64 - difficulty.leading_zeros();
-    1u64.saturating_shl(leading_zero_bits)
+    1u64.checked_shl(leading_zero_bits).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

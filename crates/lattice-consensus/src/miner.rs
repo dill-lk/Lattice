@@ -185,7 +185,8 @@ impl Miner {
             return Ok(MiningResult::Cancelled);
         }
 
-        match found.lock().take() {
+        let found_result = found.lock().take();
+        match found_result {
             Some((nonce, hash)) => {
                 info!(
                     nonce,

@@ -19,7 +19,8 @@ impl WalletAccount {
     /// Create a new random wallet account
     pub fn generate() -> Self {
         let keypair = Keypair::generate();
-        let address = Address::from_public_key(keypair.public.as_bytes());
+        let public_key = keypair.public.to_vec();
+        let address = Address::from_public_key(&public_key);
         
         Self {
             keypair,
@@ -30,7 +31,8 @@ impl WalletAccount {
 
     /// Create account from existing keypair
     pub fn from_keypair(keypair: Keypair) -> Self {
-        let address = Address::from_public_key(keypair.public.as_bytes());
+        let public_key = keypair.public.to_vec();
+        let address = Address::from_public_key(&public_key);
         
         Self {
             keypair,
@@ -41,7 +43,7 @@ impl WalletAccount {
 
     /// Create account from secret key bytes
     pub fn from_secret_key(secret_bytes: &[u8]) -> crate::Result<Self> {
-        let secret = lattice_crypto::SecretKey::from_bytes(secret_bytes)
+        let _secret = lattice_crypto::SecretKey::from_bytes(secret_bytes)
             .map_err(|e| crate::WalletError::Crypto(format!("{}", e)))?;
         
         // Generate keypair from secret (we need to reconstruct public key)

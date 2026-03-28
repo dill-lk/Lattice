@@ -2,14 +2,13 @@
 //!
 //! Implements header-first sync with parallel block downloading.
 
-use crate::error::{NetworkError, Result};
 use crate::peer::PeerManager;
-use crate::protocol::{SyncRequest, SyncResponse};
+use crate::protocol::SyncRequest;
 use dashmap::DashMap;
 use lattice_core::{Block, BlockHeader, BlockHeight, Hash};
 use libp2p::{request_response::OutboundRequestId, PeerId};
 use parking_lot::{Mutex, RwLock};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -72,7 +71,7 @@ struct PendingRequest {
 #[derive(Debug, Clone)]
 enum RequestKind {
     Status,
-    Headers { start_hash: Hash },
+    Headers,
     Blocks { hashes: Vec<Hash> },
 }
 
@@ -81,10 +80,6 @@ enum RequestKind {
 struct BlockTask {
     /// Block hash to download
     hash: Hash,
-    /// Expected height (for ordering)
-    height: BlockHeight,
-    /// Parent hash (for validation)
-    parent_hash: Hash,
 }
 
 /// Chain synchronization manager
@@ -214,7 +209,7 @@ impl ChainSync {
         &self,
         peer: PeerId,
         best_height: BlockHeight,
-        best_hash: Hash,
+        _best_hash: Hash,
         genesis_hash: Hash,
         peer_manager: &PeerManager,
     ) -> Option<(PeerId, SyncRequest)> {
@@ -286,7 +281,6 @@ impl ChainSync {
         let mut tasks = self.download_tasks.lock();
 
         let mut last_hash = *self.local_hash.read();
-        let mut last_height = *self.local_height.read();
 
         for header in headers.iter() {
             let hash = header.hash();
@@ -310,14 +304,11 @@ impl ChainSync {
             // Create download task
             tasks.push_back(BlockTask {
                 hash,
-                height: header.height,
-                parent_hash: header.prev_hash,
             });
 
             self.known_heights.insert(hash, header.height);
 
             last_hash = hash;
-            last_height = header.height;
         }
 
         drop(queue);
@@ -475,9 +466,7 @@ impl ChainSync {
     ) {
         let kind = match request {
             SyncRequest::GetStatus => RequestKind::Status,
-            SyncRequest::GetHeaders { start_hash, .. } => RequestKind::Headers {
-                start_hash: *start_hash,
-            },
+            SyncRequest::GetHeaders { .. } => RequestKind::Headers,
             SyncRequest::GetBlocks { hashes } => RequestKind::Blocks {
                 hashes: hashes.clone(),
             },
@@ -513,10 +502,9 @@ impl ChainSync {
                 for hash in hashes {
                     self.downloading.remove(&hash);
                     if let Some(height) = self.known_heights.get(&hash) {
+                        let _ = height;
                         self.download_tasks.lock().push_front(BlockTask {
                             hash,
-                            height: *height,
-                            parent_hash: [0u8; 32], // We'll revalidate later
                         });
                     }
                 }

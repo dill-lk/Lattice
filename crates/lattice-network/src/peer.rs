@@ -2,12 +2,12 @@
 //!
 //! Handles peer discovery, connection management, and peer scoring.
 
-use crate::error::{NetworkError, Result};
 use dashmap::DashMap;
 use libp2p::{
-    mdns, PeerId, Multiaddr,
+    Multiaddr, PeerId,
 };
 use parking_lot::RwLock;
+use rand::seq::SliceRandom;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -347,7 +347,6 @@ impl PeerManager {
 
     /// Get random connected peers
     pub fn random_peers(&self, count: usize) -> Vec<PeerId> {
-        use rand::seq::SliceRandom;
         let connected: Vec<_> = self.connected.read().iter().copied().collect();
         let mut rng = rand::thread_rng();
         connected

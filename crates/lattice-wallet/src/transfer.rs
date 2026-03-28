@@ -122,21 +122,17 @@ impl TransactionBuilder {
         self
     }
 
-    /// Get default gas limit based on transaction kind
-    fn default_gas_limit(&self) -> u64 {
-        match self.kind {
+    /// Build an unsigned transaction
+    pub fn build_unsigned(self) -> Result<Transaction> {
+        let default_gas_limit = match self.kind {
             TransactionKind::Transfer => DEFAULT_TRANSFER_GAS,
             TransactionKind::Call => DEFAULT_CALL_GAS,
             TransactionKind::Deploy => DEFAULT_DEPLOY_GAS,
-        }
-    }
-
-    /// Build an unsigned transaction
-    pub fn build_unsigned(self) -> Result<Transaction> {
+        };
         let from = self.from.ok_or(WalletError::MissingField("from".into()))?;
         let to = self.to.unwrap_or_else(Address::zero);
         let nonce = self.nonce.ok_or(WalletError::MissingField("nonce".into()))?;
-        let gas_limit = self.gas_limit.unwrap_or_else(|| self.default_gas_limit());
+        let gas_limit = self.gas_limit.unwrap_or(default_gas_limit);
 
         Ok(Transaction {
             kind: self.kind,
@@ -155,6 +151,11 @@ impl TransactionBuilder {
 
     /// Build and sign the transaction with the given account
     pub fn build(self, account: &mut WalletAccount) -> Result<Transaction> {
+        let default_gas_limit = match self.kind {
+            TransactionKind::Transfer => DEFAULT_TRANSFER_GAS,
+            TransactionKind::Call => DEFAULT_CALL_GAS,
+            TransactionKind::Deploy => DEFAULT_DEPLOY_GAS,
+        };
         // Use account's address if not set
         let from = self.from.unwrap_or_else(|| account.address().clone());
         
@@ -162,7 +163,7 @@ impl TransactionBuilder {
         let nonce = self.nonce.unwrap_or_else(|| account.next_nonce());
         
         let to = self.to.unwrap_or_else(Address::zero);
-        let gas_limit = self.gas_limit.unwrap_or_else(|| self.default_gas_limit());
+        let gas_limit = self.gas_limit.unwrap_or(default_gas_limit);
 
         let mut tx = Transaction {
             kind: self.kind,

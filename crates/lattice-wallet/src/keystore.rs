@@ -124,7 +124,7 @@ impl Keystore {
         plaintext.extend_from_slice(&secret_bytes);
         
         // Encrypt with AES-256-GCM
-        let cipher = Aes256Gcm::new_from_slice(&derived_key)
+        let cipher = Aes256Gcm::new_from_slice(&derived_key[..])
             .map_err(|e| WalletError::Encryption(format!("cipher init: {}", e)))?;
         let nonce = Nonce::from_slice(&nonce_bytes);
         
@@ -203,7 +203,7 @@ impl Keystore {
         }
 
         // Decrypt
-        let cipher = Aes256Gcm::new_from_slice(&derived_key)
+        let cipher = Aes256Gcm::new_from_slice(&derived_key[..])
             .map_err(|e| WalletError::Decryption(format!("cipher init: {}", e)))?;
         let nonce = Nonce::from_slice(&self.crypto.cipher_params.nonce);
 

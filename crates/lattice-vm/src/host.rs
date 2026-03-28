@@ -9,6 +9,9 @@ use lattice_core::{Address, Amount, BlockHeight, Hash, Timestamp};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+pub type ContractStorage = HashMap<Address, HashMap<Vec<u8>, Vec<u8>>>;
+pub type SharedContractStorage = Arc<Mutex<ContractStorage>>;
+
 /// Maximum storage key length
 pub const MAX_STORAGE_KEY_LEN: usize = 256;
 /// Maximum storage value length
@@ -75,12 +78,12 @@ pub struct CallContext {
 }
 
 /// Host functions interface for WASM contracts
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HostFunctions {
     /// Gas meter for this execution
     gas_meter: Arc<Mutex<GasMeter>>,
     /// Contract storage (address -> key -> value)
-    storage: Arc<Mutex<HashMap<Address, HashMap<Vec<u8>, Vec<u8>>>>>,
+    storage: SharedContractStorage,
     /// Contract code storage (code_hash -> code)
     code: Arc<Mutex<HashMap<Hash, Vec<u8>>>>,
     /// Account balances
@@ -95,11 +98,7 @@ pub struct HostFunctions {
 
 impl HostFunctions {
     /// Create new host functions with the given contexts
-    pub fn new(
-        gas_meter: GasMeter,
-        block: BlockContext,
-        call: CallContext,
-    ) -> Self {
+    pub fn new(gas_meter: GasMeter, block: BlockContext, call: CallContext) -> Self {
         Self {
             gas_meter: Arc::new(Mutex::new(gas_meter)),
             storage: Arc::new(Mutex::new(HashMap::new())),
@@ -114,7 +113,7 @@ impl HostFunctions {
     /// Create with shared state (for nested calls)
     pub fn with_shared_state(
         gas_meter: Arc<Mutex<GasMeter>>,
-        storage: Arc<Mutex<HashMap<Address, HashMap<Vec<u8>, Vec<u8>>>>>,
+        storage: SharedContractStorage,
         code: Arc<Mutex<HashMap<Hash, Vec<u8>>>>,
         balances: Arc<Mutex<HashMap<Address, Amount>>>,
         logs: Arc<Mutex<Vec<Log>>>,
@@ -197,7 +196,7 @@ impl HostFunctions {
         let mut storage = self.storage.lock().unwrap();
         storage
             .entry(self.call.address.clone())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(key.to_vec(), value.to_vec());
 
         Ok(())
@@ -228,7 +227,8 @@ impl HostFunctions {
     pub fn get_caller(&self) -> Result<Address> {
         {
             let mut meter = self.gas_meter.lock().unwrap();
-            meter.charge(meter.costs().caller)?;
+            let caller_cost = meter.costs().caller;
+            meter.charge(caller_cost)?;
         }
         Ok(self.call.caller.clone())
     }
@@ -237,7 +237,8 @@ impl HostFunctions {
     pub fn get_address(&self) -> Result<Address> {
         {
             let mut meter = self.gas_meter.lock().unwrap();
-            meter.charge(meter.costs().address)?;
+            let address_cost = meter.costs().address;
+            meter.charge(address_cost)?;
         }
         Ok(self.call.address.clone())
     }
@@ -263,7 +264,8 @@ impl HostFunctions {
     pub fn get_block_height(&self) -> Result<BlockHeight> {
         {
             let mut meter = self.gas_meter.lock().unwrap();
-            meter.charge(meter.costs().block_info)?;
+            let block_info_cost = meter.costs().block_info;
+            meter.charge(block_info_cost)?;
         }
         Ok(self.block.height)
     }
@@ -272,7 +274,8 @@ impl HostFunctions {
     pub fn get_block_timestamp(&self) -> Result<Timestamp> {
         {
             let mut meter = self.gas_meter.lock().unwrap();
-            meter.charge(meter.costs().block_info)?;
+            let block_info_cost = meter.costs().block_info;
+            meter.charge(block_info_cost)?;
         }
         Ok(self.block.timestamp)
     }
@@ -281,7 +284,8 @@ impl HostFunctions {
     pub fn get_block_difficulty(&self) -> Result<u64> {
         {
             let mut meter = self.gas_meter.lock().unwrap();
-            meter.charge(meter.costs().block_info)?;
+            let block_info_cost = meter.costs().block_info;
+            meter.charge(block_info_cost)?;
         }
         Ok(self.block.difficulty)
     }
@@ -290,7 +294,8 @@ impl HostFunctions {
     pub fn get_block_gas_limit(&self) -> Result<u64> {
         {
             let mut meter = self.gas_meter.lock().unwrap();
-            meter.charge(meter.costs().block_info)?;
+            let block_info_cost = meter.costs().block_info;
+            meter.charge(block_info_cost)?;
         }
         Ok(self.block.gas_limit)
     }
@@ -299,7 +304,8 @@ impl HostFunctions {
     pub fn get_coinbase(&self) -> Result<Address> {
         {
             let mut meter = self.gas_meter.lock().unwrap();
-            meter.charge(meter.costs().block_info)?;
+            let block_info_cost = meter.costs().block_info;
+            meter.charge(block_info_cost)?;
         }
         Ok(self.block.coinbase.clone())
     }
@@ -308,7 +314,8 @@ impl HostFunctions {
     pub fn get_prev_hash(&self) -> Result<Hash> {
         {
             let mut meter = self.gas_meter.lock().unwrap();
-            meter.charge(meter.costs().block_info)?;
+            let block_info_cost = meter.costs().block_info;
+            meter.charge(block_info_cost)?;
         }
         Ok(self.block.prev_hash)
     }
@@ -319,7 +326,8 @@ impl HostFunctions {
     pub fn get_balance(&self, address: &Address) -> Result<Amount> {
         {
             let mut meter = self.gas_meter.lock().unwrap();
-            meter.charge(meter.costs().balance)?;
+            let balance_cost = meter.costs().balance;
+            meter.charge(balance_cost)?;
         }
         let balances = self.balances.lock().unwrap();
         Ok(*balances.get(address).unwrap_or(&0))
@@ -452,7 +460,7 @@ impl HostFunctions {
     }
 
     /// Get shared storage reference
-    pub fn storage_ref(&self) -> Arc<Mutex<HashMap<Address, HashMap<Vec<u8>, Vec<u8>>>>> {
+    pub fn storage_ref(&self) -> SharedContractStorage {
         Arc::clone(&self.storage)
     }
 

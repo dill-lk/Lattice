@@ -4,15 +4,15 @@
 
 use crate::error::{Result, VmError};
 use crate::gas::GasMeter;
-use crate::host::{BlockContext, CallContext, HostFunctions, Log};
+use crate::host::{BlockContext, CallContext, HostFunctions, Log, SharedContractStorage};
 use lattice_core::{Address, Amount, Hash};
 use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, trace};
 use wasmer::{
-    imports, Function, FunctionEnv, FunctionEnvMut, Instance, Memory, MemoryType, Module, Pages,
-    Store, TypedFunction, Value,
+    imports, Function, FunctionEnv, FunctionEnvMut, Instance, Memory, MemoryType, Module, Store,
+    TypedFunction,
 };
 
 /// Maximum call depth for nested contract calls
@@ -64,7 +64,7 @@ pub struct Runtime {
     /// Contract code cache (code_hash -> compiled module)
     module_cache: HashMap<Hash, Module>,
     /// Contract storage
-    storage: Arc<Mutex<HashMap<Address, HashMap<Vec<u8>, Vec<u8>>>>>,
+    storage: SharedContractStorage,
     /// Contract code storage
     code: Arc<Mutex<HashMap<Hash, Vec<u8>>>>,
     /// Account balances
@@ -116,7 +116,7 @@ impl Runtime {
         let contract_address = {
             let mut hasher = Sha3_256::new();
             hasher.update(deployer.as_bytes());
-            hasher.update(&code_hash);
+            hasher.update(code_hash);
             let digest = hasher.finalize();
             let mut addr = [0u8; 20];
             addr.copy_from_slice(&digest[..20]);
@@ -130,9 +130,8 @@ impl Runtime {
         );
 
         // Compile the module
-        let module = Module::new(&self.store, &code).map_err(|e| {
-            VmError::CompilationError(format!("failed to compile WASM: {}", e))
-        })?;
+        let module = Module::new(&self.store, &code)
+            .map_err(|e| VmError::CompilationError(format!("failed to compile WASM: {}", e)))?;
 
         // Create gas meter and charge for deployment
         let mut gas_meter = GasMeter::new(gas_limit);
@@ -141,7 +140,8 @@ impl Runtime {
         // Store the code
         self.code.lock().unwrap().insert(code_hash, code);
         self.module_cache.insert(code_hash, module.clone());
-        self.address_code.insert(contract_address.clone(), code_hash);
+        self.address_code
+            .insert(contract_address.clone(), code_hash);
 
         // Set initial balance
         {
@@ -190,11 +190,10 @@ impl Runtime {
         block: BlockContext,
     ) -> Result<ExecutionResult> {
         // Get contract code hash
-        let code_hash = self
+        let code_hash = *self
             .address_code
             .get(&contract)
-            .ok_or_else(|| VmError::ContractNotFound(contract.to_string()))?
-            .clone();
+            .ok_or_else(|| VmError::ContractNotFound(contract.to_string()))?;
 
         // Get or compile module
         let module = self.get_or_compile_module(&code_hash)?;
@@ -378,7 +377,10 @@ impl Runtime {
 
     /// Set balance for an address
     pub fn set_balance(&mut self, address: &Address, amount: Amount) {
-        self.balances.lock().unwrap().insert(address.clone(), amount);
+        self.balances
+            .lock()
+            .unwrap()
+            .insert(address.clone(), amount);
     }
 
     /// Get balance for an address
@@ -409,7 +411,12 @@ impl Default for Runtime {
 
 // ========== Host Function Implementations ==========
 
-fn read_memory(env: &WasmEnv, store: &impl wasmer::AsStoreRef, offset: u32, len: u32) -> Result<Vec<u8>> {
+fn read_memory(
+    env: &WasmEnv,
+    store: &impl wasmer::AsStoreRef,
+    offset: u32,
+    len: u32,
+) -> Result<Vec<u8>> {
     let memory = env
         .memory
         .as_ref()
@@ -418,7 +425,10 @@ fn read_memory(env: &WasmEnv, store: &impl wasmer::AsStoreRef, offset: u32, len:
     let view = memory.view(store);
     let mut buffer = vec![0u8; len as usize];
     view.read(offset as u64, &mut buffer)
-        .map_err(|_| VmError::MemoryOutOfBounds { offset, length: len })?;
+        .map_err(|_| VmError::MemoryOutOfBounds {
+            offset,
+            length: len,
+        })?;
     Ok(buffer)
 }
 
@@ -442,8 +452,13 @@ fn write_memory(
     Ok(())
 }
 
-fn host_storage_read(mut env: FunctionEnvMut<WasmEnv>, key_ptr: u32, key_len: u32, value_ptr: u32) -> i32 {
-    let (data, store) = env.data_and_store_mut();
+fn host_storage_read(
+    mut env: FunctionEnvMut<WasmEnv>,
+    key_ptr: u32,
+    key_len: u32,
+    value_ptr: u32,
+) -> i32 {
+    let (data, mut store) = env.data_and_store_mut();
 
     let key = match read_memory(data, &store, key_ptr, key_len) {
         Ok(k) => k,
@@ -452,7 +467,7 @@ fn host_storage_read(mut env: FunctionEnvMut<WasmEnv>, key_ptr: u32, key_len: u3
 
     match data.host.storage_read(&key) {
         Ok(Some(value)) => {
-            if write_memory(data, &mut env.as_store_mut(), value_ptr, &value).is_err() {
+            if write_memory(data, &mut store, value_ptr, &value).is_err() {
                 return -1;
             }
             value.len() as i32
@@ -502,26 +517,26 @@ fn host_storage_delete(mut env: FunctionEnvMut<WasmEnv>, key_ptr: u32, key_len: 
 }
 
 fn host_get_caller(mut env: FunctionEnvMut<WasmEnv>, ptr: u32) -> i32 {
-    let data = env.data_mut();
+    let (data, mut store) = env.data_and_store_mut();
     let caller = match data.host.get_caller() {
         Ok(c) => c,
         Err(_) => return -1,
     };
 
-    match write_memory(data, &mut env.as_store_mut(), ptr, caller.as_bytes()) {
+    match write_memory(data, &mut store, ptr, caller.as_bytes()) {
         Ok(()) => 20,
         Err(_) => -1,
     }
 }
 
 fn host_get_address(mut env: FunctionEnvMut<WasmEnv>, ptr: u32) -> i32 {
-    let data = env.data_mut();
+    let (data, mut store) = env.data_and_store_mut();
     let address = match data.host.get_address() {
         Ok(a) => a,
         Err(_) => return -1,
     };
 
-    match write_memory(data, &mut env.as_store_mut(), ptr, address.as_bytes()) {
+    match write_memory(data, &mut store, ptr, address.as_bytes()) {
         Ok(()) => 20,
         Err(_) => -1,
     }
@@ -539,9 +554,9 @@ fn host_get_input_len(env: FunctionEnvMut<WasmEnv>) -> u32 {
 
 fn host_get_input(mut env: FunctionEnvMut<WasmEnv>, ptr: u32) -> i32 {
     let input = env.data().host.get_input().to_vec();
-    let data = env.data_mut();
+    let (data, mut store) = env.data_and_store_mut();
 
-    match write_memory(data, &mut env.as_store_mut(), ptr, &input) {
+    match write_memory(data, &mut store, ptr, &input) {
         Ok(()) => input.len() as i32,
         Err(_) => -1,
     }
@@ -556,7 +571,7 @@ fn host_get_block_timestamp(env: FunctionEnvMut<WasmEnv>) -> u64 {
 }
 
 fn host_sha3(mut env: FunctionEnvMut<WasmEnv>, data_ptr: u32, data_len: u32, out_ptr: u32) -> i32 {
-    let (wasm_env, store) = env.data_and_store_mut();
+    let (wasm_env, mut store) = env.data_and_store_mut();
 
     let input = match read_memory(wasm_env, &store, data_ptr, data_len) {
         Ok(d) => d,
@@ -568,7 +583,7 @@ fn host_sha3(mut env: FunctionEnvMut<WasmEnv>, data_ptr: u32, data_len: u32, out
         Err(_) => return -1,
     };
 
-    match write_memory(wasm_env, &mut env.as_store_mut(), out_ptr, &hash) {
+    match write_memory(wasm_env, &mut store, out_ptr, &hash) {
         Ok(()) => 32,
         Err(_) => -1,
     }
@@ -600,7 +615,10 @@ fn host_verify_signature(
         Err(_) => return -1,
     };
 
-    match data.host.verify_signature(&message, &signature, &public_key) {
+    match data
+        .host
+        .verify_signature(&message, &signature, &public_key)
+    {
         Ok(true) => 1,
         Ok(false) => 0,
         Err(_) => -1,
@@ -652,14 +670,14 @@ fn host_emit_log(
     }
 }
 
-fn host_abort(env: FunctionEnvMut<WasmEnv>, msg_ptr: u32, msg_len: u32) {
+fn host_abort(mut env: FunctionEnvMut<WasmEnv>, msg_ptr: u32, msg_len: u32) {
     let (data, store) = env.data_and_store_mut();
 
     if let Ok(msg_bytes) = read_memory(data, &store, msg_ptr, msg_len) {
         let msg = String::from_utf8_lossy(&msg_bytes);
         tracing::error!(message = %msg, "Contract aborted");
     }
-    
+
     // This will cause the WASM execution to trap
     panic!("contract aborted");
 }
@@ -667,12 +685,6 @@ fn host_abort(env: FunctionEnvMut<WasmEnv>, msg_ptr: u32, msg_len: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // A minimal WASM module that does nothing (for testing instantiation)
-    const MINIMAL_WASM: &[u8] = &[
-        0x00, 0x61, 0x73, 0x6d, // magic number
-        0x01, 0x00, 0x00, 0x00, // version
-    ];
 
     #[test]
     fn test_runtime_creation() {

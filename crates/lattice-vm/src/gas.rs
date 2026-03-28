@@ -167,7 +167,7 @@ impl GasMeter {
 
     /// Charge gas for SHA3 hashing
     pub fn charge_sha3(&mut self, data_len: usize) -> Result<()> {
-        let words = (data_len as u64 + 31) / 32;
+        let words = (data_len as u64).div_ceil(32);
         let cost = self.costs.sha3_base + words * self.costs.sha3_word;
         self.charge(cost)
     }
@@ -220,7 +220,7 @@ impl GasMeter {
         Ok(Self {
             limit: gas_limit,
             used: 0,
-            costs: self.costs.clone(),
+            costs: self.costs,
         })
     }
 

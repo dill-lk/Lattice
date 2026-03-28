@@ -69,7 +69,7 @@ impl DifficultyAdjuster {
 
     /// Check if difficulty should be adjusted at this height
     pub fn should_adjust(&self, height: BlockHeight) -> bool {
-        height > 0 && height % self.adjustment_interval == 0
+        height != 0 && height.is_multiple_of(self.adjustment_interval)
     }
 
     /// Calculate the next difficulty based on recent block times

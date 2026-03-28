@@ -476,7 +476,7 @@ mod tests {
         let mut gov = GovernanceSystem::new(config.clone(), 1_000_000_000_000_000_000_000_000);
         
         let proposer = Address::from_bytes([1u8; 20]);
-        gov.update_voting_power(proposer.clone(), 5000_000_000_000_000_000_000);
+        gov.update_voting_power(proposer.clone(), 5_000_000_000_000_000_000_000);
         
         let proposal_id = gov.create_proposal(
             proposer,
@@ -501,9 +501,9 @@ mod tests {
         let voter1 = Address::from_bytes([2u8; 20]);
         let voter2 = Address::from_bytes([3u8; 20]);
         
-        gov.update_voting_power(proposer.clone(), 5000_000_000_000_000_000_000);
-        gov.update_voting_power(voter1.clone(), 3000_000_000_000_000_000_000);
-        gov.update_voting_power(voter2.clone(), 2000_000_000_000_000_000_000);
+        gov.update_voting_power(proposer.clone(), 5_000_000_000_000_000_000_000);
+        gov.update_voting_power(voter1.clone(), 3_000_000_000_000_000_000_000);
+        gov.update_voting_power(voter2.clone(), 2_000_000_000_000_000_000_000);
         
         let proposal_id = gov.create_proposal(
             proposer,

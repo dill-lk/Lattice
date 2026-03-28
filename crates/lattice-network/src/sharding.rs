@@ -5,7 +5,6 @@
 use lattice_core::{Address, BlockHeight, Hash};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use sha3::{Digest, Sha3_256};
 
 /// Shard configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,7 +251,7 @@ impl ShardManager {
         }
         
         let avg_load: f64 = loads.iter().sum::<f64>() / loads.len() as f64;
-        let max_load = loads.iter().fold(0.0, |a, &b| a.max(b));
+        let max_load = loads.iter().fold(0.0_f64, |a, &b| a.max(b));
         let min_load = loads.iter().fold(f64::MAX, |a, &b| a.min(b));
         
         // Check if imbalance exceeds threshold
@@ -267,7 +266,7 @@ impl ShardManager {
     /// Perform resharding (rebalance load)
     pub fn reshard(&mut self) -> ReshardReport {
         let mut moved_addresses = 0;
-        let mut moved_peers = 0;
+        let moved_peers = 0;
         
         // Calculate target load per shard
         let total_load: f64 = self.shards.values().map(|s| s.load).sum();
@@ -337,7 +336,7 @@ impl ShardManager {
         }
         
         let avg_load: f64 = loads.iter().sum::<f64>() / loads.len() as f64;
-        let max_load = loads.iter().fold(0.0, |a, &b| a.max(b));
+        let max_load = loads.iter().fold(0.0_f64, |a, &b| a.max(b));
         let min_load = loads.iter().fold(f64::MAX, |a, &b| a.min(b));
         
         if avg_load > 0.0 {

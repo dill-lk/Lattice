@@ -41,11 +41,13 @@ struct RpcRequest {
 /// JSON-RPC response
 #[derive(Debug, Deserialize)]
 struct RpcResponse {
+    #[allow(dead_code)]
     jsonrpc: String,
     #[serde(default)]
     result: Option<Value>,
     #[serde(default)]
     error: Option<RpcErrorObj>,
+    #[allow(dead_code)]
     id: u64,
 }
 
@@ -75,11 +77,6 @@ impl RpcClient {
             endpoint: endpoint.to_string(),
             request_id: AtomicU64::new(1),
         })
-    }
-
-    /// Get the RPC endpoint URL
-    pub fn endpoint(&self) -> &str {
-        &self.endpoint
     }
 
     /// Send a JSON-RPC request
@@ -177,52 +174,6 @@ impl RpcClient {
 
         parse_hex_u64(num_str)
     }
-
-    /// Get the current mining difficulty
-    pub async fn get_difficulty(&self) -> Result<u64> {
-        let result = self.call("lat_getDifficulty", json!([])).await?;
-
-        let diff_str = result
-            .as_str()
-            .ok_or_else(|| anyhow!("Invalid getDifficulty response"))?;
-
-        parse_hex_u64(diff_str)
-    }
-
-    /// Check if the node is syncing
-    pub async fn is_syncing(&self) -> Result<bool> {
-        let result = self.call("lat_syncing", json!([])).await?;
-
-        // Returns false if not syncing, or an object with sync status
-        Ok(!matches!(result, Value::Bool(false)))
-    }
-
-    /// Get node info
-    pub async fn get_node_info(&self) -> Result<NodeInfo> {
-        let result = self.call("lat_nodeInfo", json!([])).await?;
-
-        Ok(NodeInfo {
-            version: result
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
-            network: result
-                .get("network")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
-            peers: result.get("peers").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-        })
-    }
-}
-
-/// Node information
-#[derive(Debug, Clone)]
-pub struct NodeInfo {
-    pub version: String,
-    pub network: String,
-    pub peers: usize,
 }
 
 /// Parse a hex string to u64

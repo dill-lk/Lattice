@@ -2,13 +2,13 @@
 //!
 //! Defines message types and network behavior using libp2p.
 
-use crate::error::{NetworkError, Result};
+use crate::error::NetworkError;
 use borsh::{BorshDeserialize, BorshSerialize};
 use lattice_core::{Block, BlockHeader, BlockHeight, Hash, Transaction};
 use libp2p::{
     gossipsub::{
-        self, Behaviour as Gossipsub, Config as GossipsubConfig, Event as GossipsubEvent,
-        IdentTopic, Message, MessageAuthenticity, MessageId, ValidationMode,
+        Behaviour as Gossipsub, Config as GossipsubConfig, Event as GossipsubEvent, IdentTopic,
+        MessageAuthenticity,
     },
     identity::Keypair,
     mdns::{self, tokio::Behaviour as Mdns, Event as MdnsEvent},
@@ -20,13 +20,7 @@ use libp2p::{
     PeerId, StreamProtocol,
 };
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Sha3_256};
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash as StdHash, Hasher},
-    io,
-    time::Duration,
-};
+use std::{io, time::Duration};
 
 /// Protocol version
 pub const PROTOCOL_VERSION: &str = "/lattice/1.0.0";
@@ -51,12 +45,12 @@ pub enum GossipMessage {
 
 impl GossipMessage {
     /// Serialize to bytes
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+    pub fn to_bytes(&self) -> crate::error::Result<Vec<u8>> {
         borsh::to_vec(self).map_err(|e| NetworkError::Serialization(e.to_string()))
     }
 
     /// Deserialize from bytes
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> crate::error::Result<Self> {
         borsh::from_slice(bytes).map_err(|e| NetworkError::Serialization(e.to_string()))
     }
 
@@ -111,24 +105,24 @@ pub enum SyncResponse {
 
 impl SyncRequest {
     /// Serialize to bytes
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+    pub fn to_bytes(&self) -> crate::error::Result<Vec<u8>> {
         borsh::to_vec(self).map_err(|e| NetworkError::Serialization(e.to_string()))
     }
 
     /// Deserialize from bytes
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> crate::error::Result<Self> {
         borsh::from_slice(bytes).map_err(|e| NetworkError::Serialization(e.to_string()))
     }
 }
 
 impl SyncResponse {
     /// Serialize to bytes
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+    pub fn to_bytes(&self) -> crate::error::Result<Vec<u8>> {
         borsh::to_vec(self).map_err(|e| NetworkError::Serialization(e.to_string()))
     }
 
     /// Deserialize from bytes
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> crate::error::Result<Self> {
         borsh::from_slice(bytes).map_err(|e| NetworkError::Serialization(e.to_string()))
     }
 }
@@ -150,14 +144,14 @@ impl Codec for SyncCodec {
         Box<dyn std::future::Future<Output = io::Result<Self::Request>> + Send + 'async_trait>,
     >
     where
-        T: tokio::io::AsyncRead + Unpin + Send + 'async_trait,
+        T: libp2p::futures::AsyncRead + Unpin + Send + 'async_trait,
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
         Self: 'async_trait,
     {
         Box::pin(async move {
-            use tokio::io::AsyncReadExt;
+            use libp2p::futures::AsyncReadExt;
             let mut len_bytes = [0u8; 4];
             io.read_exact(&mut len_bytes).await?;
             let len = u32::from_be_bytes(len_bytes) as usize;
@@ -180,7 +174,7 @@ impl Codec for SyncCodec {
         Box<dyn std::future::Future<Output = io::Result<Self::Response>> + Send + 'async_trait>,
     >
     where
-        T: tokio::io::AsyncRead + Unpin + Send + 'async_trait,
+        T: libp2p::futures::AsyncRead + Unpin + Send + 'async_trait,
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
@@ -198,14 +192,14 @@ impl Codec for SyncCodec {
         Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'async_trait>,
     >
     where
-        T: tokio::io::AsyncWrite + Unpin + Send + 'async_trait,
+        T: libp2p::futures::AsyncWrite + Unpin + Send + 'async_trait,
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
         Self: 'async_trait,
     {
         Box::pin(async move {
-            use tokio::io::AsyncWriteExt;
+            use libp2p::futures::AsyncWriteExt;
             let len = (req.len() as u32).to_be_bytes();
             io.write_all(&len).await?;
             io.write_all(&req).await?;
@@ -222,7 +216,7 @@ impl Codec for SyncCodec {
         Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'async_trait>,
     >
     where
-        T: tokio::io::AsyncWrite + Unpin + Send + 'async_trait,
+        T: libp2p::futures::AsyncWrite + Unpin + Send + 'async_trait,
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
@@ -278,7 +272,7 @@ pub enum NetworkEvent {
 
 impl NetworkBehavior {
     /// Create a new network behavior
-    pub fn new(keypair: &Keypair, enable_mdns: bool) -> Result<Self> {
+    pub fn new(keypair: &Keypair, _enable_mdns: bool) -> crate::error::Result<Self> {
         // Configure gossipsub
         let gossipsub_config = GossipsubConfig::default();
 
@@ -308,7 +302,7 @@ impl NetworkBehavior {
     }
 
     /// Subscribe to gossip topics
-    pub fn subscribe_topics(&mut self) -> Result<()> {
+    pub fn subscribe_topics(&mut self) -> crate::error::Result<()> {
         let blocks_topic = IdentTopic::new(TOPIC_BLOCKS);
         let txs_topic = IdentTopic::new(TOPIC_TRANSACTIONS);
 
@@ -324,7 +318,7 @@ impl NetworkBehavior {
     }
 
     /// Publish a block to the network
-    pub fn publish_block(&mut self, block: Block) -> Result<()> {
+    pub fn publish_block(&mut self, block: Block) -> crate::error::Result<()> {
         let msg = GossipMessage::NewBlock(block);
         let topic = IdentTopic::new(TOPIC_BLOCKS);
         let data = msg.to_bytes()?;
@@ -337,7 +331,7 @@ impl NetworkBehavior {
     }
 
     /// Publish a transaction to the network
-    pub fn publish_transaction(&mut self, tx: Transaction) -> Result<()> {
+    pub fn publish_transaction(&mut self, tx: Transaction) -> crate::error::Result<()> {
         let msg = GossipMessage::NewTransaction(tx);
         let topic = IdentTopic::new(TOPIC_TRANSACTIONS);
         let data = msg.to_bytes()?;
@@ -354,7 +348,7 @@ impl NetworkBehavior {
         &mut self,
         peer: &PeerId,
         request: SyncRequest,
-    ) -> Result<request_response::OutboundRequestId> {
+    ) -> crate::error::Result<request_response::OutboundRequestId> {
         let data = request.to_bytes()?;
         Ok(self.sync.send_request(peer, data))
     }
@@ -364,7 +358,7 @@ impl NetworkBehavior {
         &mut self,
         channel: request_response::ResponseChannel<Vec<u8>>,
         response: SyncResponse,
-    ) -> Result<()> {
+    ) -> crate::error::Result<()> {
         let data = response.to_bytes()?;
         self.sync
             .send_response(channel, data)
@@ -478,7 +472,6 @@ impl NetworkBehavior {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::Address;
 
     #[test]
     fn test_gossip_message_serialization() {

@@ -6,7 +6,7 @@
 //! - Chain validation (parent block, height, state transitions)
 
 use crate::{
-    Address, Amount, Block, BlockHeader, BlockHeight, Hash, State, Transaction,
+    Address, Amount, Block, State, Transaction,
     TransactionKind, CoreError, Result,
 };
 

@@ -75,6 +75,8 @@ parking_lot = "0.12"
 dashmap = "5.5"
 argon2 = "0.5"
 rayon = "1.8"
+num_cpus = "1.17"
+rustc_version_runtime = "0.3"
 
 # Testing
 proptest = "1.4"

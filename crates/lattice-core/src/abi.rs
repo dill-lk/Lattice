@@ -1,6 +1,6 @@
 //! Smart contract ABI (Application Binary Interface) encoding/decoding
 
-use crate::{Address, Amount, Hash};
+use crate::Address;
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};

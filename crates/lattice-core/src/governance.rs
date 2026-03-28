@@ -2,7 +2,7 @@
 //!
 //! Allows LAT token holders to vote on protocol changes
 
-use lattice_core::{Address, Amount, BlockHeight, Hash};
+use crate::{Address, Amount, BlockHeight, Hash};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -251,7 +251,7 @@ pub struct GovernanceConfig {
 impl Default for GovernanceConfig {
     fn default() -> Self {
         Self {
-            min_deposit: 1000_000_000_000_000_000_000,  // 1000 LAT
+            min_deposit: 1_000_000_000_000_000_000_000,  // 1000 LAT
             voting_period: 40320,                        // ~7 days (15s blocks)
             quorum_percentage: 0.10,                     // 10% of supply must vote
             approval_percentage: 0.51,                   // 51% of votes must be yes

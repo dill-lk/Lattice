@@ -3,7 +3,7 @@
 //! MMR is an append-only data structure that allows efficient proofs
 //! without rebalancing, perfect for blockchain state.
 
-use lattice_core::Hash;
+use crate::Hash;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 

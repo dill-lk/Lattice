@@ -5,7 +5,7 @@
 //! which provides NIST security level 3 (equivalent to AES-192).
 
 use pqcrypto_dilithium::dilithium3;
-use pqcrypto_traits::sign::{PublicKey as _, SecretKey as _, DetachedSignature};
+use pqcrypto_traits::sign::{PublicKey as _, SecretKey as _, DetachedSignature, SignedMessage as _};
 use serde::{Deserialize, Serialize};
 use crate::{CryptoError, Result};
 
@@ -19,8 +19,10 @@ pub const SECRET_KEY_SIZE: usize = 4016;
 pub const SIGNATURE_SIZE: usize = 3293;
 
 /// Dilithium public key for signature verification
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct PublicKey(dilithium3::PublicKey);
+
+impl Eq for PublicKey {}
 
 impl PublicKey {
     /// Create from raw bytes

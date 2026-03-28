@@ -1,13 +1,13 @@
 # Lattice Blockchain - One-Click Installer for Windows
-# This script installs Lattice blockchain and all its dependencies
+# Downloads pre-built binaries from GitHub Releases
 
 $ErrorActionPreference = "Stop"
 
 # Configuration
-$INSTALL_DIR = if ($env:LATTICE_INSTALL_DIR) { $env:LATTICE_INSTALL_DIR } else { "$env:USERPROFILE\.lattice" }
-$BIN_DIR = "$env:USERPROFILE\.local\bin"
-$REPO_URL = "https://github.com/lattice-chain/lattice"
-$MIN_RUST_VERSION = "1.70.0"
+$BIN_DIR = if ($env:LATTICE_BIN_DIR) { $env:LATTICE_BIN_DIR } else { "$env:USERPROFILE\.local\bin" }
+$GITHUB_REPO = "dill-lk/Lattice"
+$GITHUB_API  = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+$ASSET_NAME  = "lattice-windows-amd64.zip"
 
 # Helper functions
 function Print-Header {
@@ -28,212 +28,115 @@ function Print-Step {
 
 function Print-Info {
     param([string]$Message)
-    Write-Host "ℹ  " -ForegroundColor Cyan -NoNewline
+    Write-Host "i  " -ForegroundColor Cyan -NoNewline
     Write-Host $Message
 }
 
 function Print-Success {
     param([string]$Message)
-    Write-Host "✓  " -ForegroundColor Green -NoNewline
+    Write-Host "v  " -ForegroundColor Green -NoNewline
     Write-Host $Message
 }
 
 function Print-Warning {
     param([string]$Message)
-    Write-Host "⚠  " -ForegroundColor Yellow -NoNewline
+    Write-Host "!  " -ForegroundColor Yellow -NoNewline
     Write-Host $Message
 }
 
 function Print-Error {
     param([string]$Message)
-    Write-Host "✗  " -ForegroundColor Red -NoNewline
+    Write-Host "x  " -ForegroundColor Red -NoNewline
     Write-Host $Message
 }
 
-# Check if command exists
-function Test-CommandExists {
-    param([string]$Command)
-    $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
-}
+# Fetch the latest release and return download URL + tag
+function Get-LatestRelease {
+    Print-Step "Fetching latest release from GitHub..."
 
-# Check administrator privileges
-function Test-Administrator {
-    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
+    $release = Invoke-RestMethod -Uri $GITHUB_API -UseBasicParsing
 
-# Check Rust installation
-function Check-Rust {
-    Print-Step "Checking Rust installation..."
-    
-    if (-not (Test-CommandExists "rustc")) {
-        Print-Warning "Rust is not installed"
-        $response = Read-Host "Install Rust now? (y/n)"
-        if ($response -eq "y" -or $response -eq "Y") {
-            Install-Rust
-        } else {
-            Print-Error "Rust is required. Exiting."
-            exit 1
-        }
-    } else {
-        $rustVersion = (rustc --version).Split()[1]
-        Print-Success "Rust $rustVersion is installed"
-        
-        # Version check (simplified)
-        $currentVer = [version]$rustVersion
-        $minVer = [version]$MIN_RUST_VERSION
-        if ($currentVer -lt $minVer) {
-            Print-Warning "Rust version $rustVersion is below minimum $MIN_RUST_VERSION"
-            Print-Info "Updating Rust..."
-            rustup update stable
-        }
-    }
-}
+    $script:ReleaseTag = $release.tag_name
 
-# Install Rust
-function Install-Rust {
-    Print-Step "Installing Rust..."
-    
-    # Download rustup-init.exe
-    $rustupUrl = "https://win.rustup.rs/x86_64"
-    $rustupPath = "$env:TEMP\rustup-init.exe"
-    
-    Print-Info "Downloading Rust installer..."
-    Invoke-WebRequest -Uri $rustupUrl -OutFile $rustupPath
-    
-    Print-Info "Running Rust installer..."
-    Start-Process -FilePath $rustupPath -ArgumentList "-y" -Wait
-    
-    # Refresh environment
-    $env:PATH = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-    
-    Print-Success "Rust installed successfully"
-}
+    $asset = $release.assets | Where-Object { $_.name -eq $ASSET_NAME } | Select-Object -First 1
 
-# Check Git
-function Check-Git {
-    Print-Step "Checking Git installation..."
-    
-    if (-not (Test-CommandExists "git")) {
-        Print-Warning "Git is not installed"
-        Print-Info "Please install Git from: https://git-scm.com/download/win"
-        Print-Info "After installing Git, please restart this script."
-        exit 1
-    } else {
-        $gitVersion = (git --version).Split()[2]
-        Print-Success "Git $gitVersion is installed"
-    }
-}
-
-# Check Visual Studio Build Tools
-function Check-BuildTools {
-    Print-Step "Checking Visual Studio Build Tools..."
-    
-    $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-    
-    if (Test-Path $vsWhere) {
-        $vsInstances = & $vsWhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        if ($vsInstances) {
-            Print-Success "Visual Studio Build Tools found"
-            return
-        }
-    }
-    
-    Print-Warning "Visual Studio Build Tools not found"
-    Print-Info "Rust requires Visual Studio Build Tools to compile on Windows"
-    Print-Info "Please install from: https://visualstudio.microsoft.com/downloads/"
-    Print-Info "Select 'Desktop development with C++' workload"
-    
-    $response = Read-Host "Continue anyway? (y/n)"
-    if ($response -ne "y" -and $response -ne "Y") {
+    if (-not $asset) {
+        Print-Error "No pre-built binary found for $ASSET_NAME in release $script:ReleaseTag."
+        Print-Info "See https://github.com/$GITHUB_REPO/releases for available assets."
         exit 1
     }
+
+    $script:DownloadUrl = $asset.browser_download_url
+
+    Print-Success "Latest release: $script:ReleaseTag"
 }
 
-# Setup repository
-function Setup-Repo {
-    Print-Step "Setting up Lattice repository..."
-    
-    if (Test-Path $INSTALL_DIR) {
-        Print-Info "Repository exists. Updating..."
-        Set-Location $INSTALL_DIR
-        git pull origin main
-    } else {
-        Print-Info "Cloning repository..."
-        git clone $REPO_URL $INSTALL_DIR
-        Set-Location $INSTALL_DIR
-    }
-    
-    Print-Success "Repository ready"
-}
-
-# Build Lattice
-function Build-Lattice {
-    Print-Step "Building Lattice (this may take 10-20 minutes)..."
-    
-    Set-Location $INSTALL_DIR
-    
-    # Show progress
-    Print-Info "Compiling Rust code..."
-    $progressPreference = 'silentlyContinue'
-    
-    cargo build --release --bins 2>&1 | ForEach-Object {
-        if ($_ -match "Compiling") {
-            Write-Host "  → $_" -ForegroundColor Cyan
-        }
-    }
-    
-    $progressPreference = 'Continue'
-    Print-Success "Build completed"
-}
-
-# Install binaries
+# Download the zip and install binaries
 function Install-Binaries {
-    Print-Step "Installing binaries..."
-    
-    # Create bin directory
+    Print-Step "Downloading $ASSET_NAME..."
+
+    $tmpDir  = [System.IO.Path]::GetTempPath() + [System.Guid]::NewGuid().ToString()
+    New-Item -ItemType Directory -Path $tmpDir | Out-Null
+
+    $archive = Join-Path $tmpDir $ASSET_NAME
+
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $script:DownloadUrl -OutFile $archive -UseBasicParsing
+    $ProgressPreference = 'Continue'
+
+    Print-Success "Download complete"
+    Print-Step "Installing binaries to $BIN_DIR..."
+
     if (-not (Test-Path $BIN_DIR)) {
         New-Item -ItemType Directory -Path $BIN_DIR -Force | Out-Null
     }
-    
-    # Copy binaries
-    Copy-Item "$INSTALL_DIR\target\release\lattice-node.exe" "$BIN_DIR\" -Force
-    Copy-Item "$INSTALL_DIR\target\release\lattice-cli.exe" "$BIN_DIR\" -Force
-    Copy-Item "$INSTALL_DIR\target\release\lattice-miner.exe" "$BIN_DIR\" -Force
-    
-    Print-Success "Binaries installed to $BIN_DIR"
+
+    Expand-Archive -Path $archive -DestinationPath $tmpDir -Force
+
+    $installed = 0
+    foreach ($bin in @("lattice-node.exe", "lattice-cli.exe", "lattice-miner.exe")) {
+        $src = Join-Path $tmpDir $bin
+        if (Test-Path $src) {
+            Copy-Item $src (Join-Path $BIN_DIR $bin) -Force
+            $installed++
+        }
+    }
+
+    Remove-Item -Recurse -Force $tmpDir
+
+    if ($installed -eq 0) {
+        Print-Error "No binaries were found in the archive. The release may be incomplete."
+        exit 1
+    }
+
+    Print-Success "Installed $installed binaries to $BIN_DIR"
 }
 
-# Setup PATH
+# Add BIN_DIR to the user PATH if not already present
 function Setup-Path {
     Print-Step "Setting up PATH..."
-    
-    # Get current user PATH
+
     $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    
+
     if ($currentPath -notlike "*$BIN_DIR*") {
-        # Add to PATH
-        $newPath = "$currentPath;$BIN_DIR"
-        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        [Environment]::SetEnvironmentVariable("Path", "$currentPath;$BIN_DIR", "User")
         $env:PATH = "$env:PATH;$BIN_DIR"
-        
-        Print-Success "Added to PATH"
-        Print-Warning "You may need to restart your terminal for PATH changes to take effect"
+        Print-Success "Added $BIN_DIR to PATH"
+        Print-Warning "Restart your terminal for the PATH change to take effect"
     } else {
         Print-Success "PATH already configured"
     }
 }
 
-# Create configuration
+# Create default configuration
 function Create-Config {
     Print-Step "Creating default configuration..."
-    
+
     $configDir = "$env:USERPROFILE\.lattice\config"
     if (-not (Test-Path $configDir)) {
         New-Item -ItemType Directory -Path $configDir -Force | Out-Null
     }
-    
+
     $configContent = @"
 # Lattice Node Configuration
 
@@ -263,40 +166,26 @@ db_path = "$env:USERPROFILE\.lattice\data"
 # Cache size in MB
 cache_size = 256
 "@
-    
-    $configContent | Out-File -FilePath "$configDir\node.toml" -Encoding utf8
-    
-    Print-Success "Configuration created at $configDir\node.toml"
-}
 
-# Run tests
-function Run-Tests {
-    Print-Step "Running tests (optional)..."
-    
-    $response = Read-Host "Run test suite? This will take a few minutes. (y/n)"
-    if ($response -eq "y" -or $response -eq "Y") {
-        Set-Location $INSTALL_DIR
-        cargo test --all --release
-        Print-Success "All tests passed!"
-    } else {
-        Print-Info "Skipping tests"
-    }
+    $configContent | Out-File -FilePath "$configDir\node.toml" -Encoding utf8
+
+    Print-Success "Configuration created at $configDir\node.toml"
 }
 
 # Create desktop shortcuts
 function Create-Shortcuts {
-    Print-Step "Creating shortcuts..."
-    
+    Print-Step "Creating desktop shortcuts..."
+
     $desktopPath = [Environment]::GetFolderPath("Desktop")
-    
-    # Node shortcut
     $WshShell = New-Object -ComObject WScript.Shell
+
+    # Node shortcut
     $shortcut = $WshShell.CreateShortcut("$desktopPath\Lattice Node.lnk")
     $shortcut.TargetPath = "$BIN_DIR\lattice-node.exe"
     $shortcut.WorkingDirectory = "$env:USERPROFILE\.lattice"
     $shortcut.Description = "Lattice Blockchain Node"
     $shortcut.Save()
-    
+
     # CLI shortcut
     $shortcut = $WshShell.CreateShortcut("$desktopPath\Lattice CLI.lnk")
     $shortcut.TargetPath = "powershell.exe"
@@ -304,8 +193,8 @@ function Create-Shortcuts {
     $shortcut.WorkingDirectory = "$env:USERPROFILE\.lattice"
     $shortcut.Description = "Lattice Command Line"
     $shortcut.Save()
-    
-    Print-Success "Shortcuts created on desktop"
+
+    Print-Success "Shortcuts created on Desktop"
 }
 
 # Print completion message
@@ -318,6 +207,7 @@ function Print-Completion {
     Write-Host "╚══════════════════════════════════════════════════════════╝" -ForegroundColor Green
     Write-Host ""
     Write-Host "📍 Installation Details:" -ForegroundColor Cyan
+    Write-Host "   • Version:  $script:ReleaseTag" -ForegroundColor White
     Write-Host "   • Binaries: $BIN_DIR" -ForegroundColor White
     Write-Host "   • Config:   $env:USERPROFILE\.lattice\config" -ForegroundColor White
     Write-Host "   • Data:     $env:USERPROFILE\.lattice\data" -ForegroundColor White
@@ -337,40 +227,24 @@ function Print-Completion {
     Write-Host "      lattice-miner --threads 4" -ForegroundColor Blue
     Write-Host ""
     Write-Host "📚 Documentation:" -ForegroundColor Cyan
-    Write-Host "   • README: $INSTALL_DIR\README.md" -ForegroundColor White
-    Write-Host "   • Docs:   https://docs.latticechain.io" -ForegroundColor White
+    Write-Host "   • GitHub: https://github.com/$GITHUB_REPO" -ForegroundColor White
     Write-Host ""
     Write-Host "💡 Need help?" -ForegroundColor Cyan
-    Write-Host "   • GitHub:  https://github.com/lattice-chain/lattice" -ForegroundColor White
-    Write-Host "   • Discord: https://discord.gg/lattice" -ForegroundColor White
+    Write-Host "   • GitHub: https://github.com/$GITHUB_REPO" -ForegroundColor White
     Write-Host ""
 }
 
 # Main installation flow
 function Main {
     Print-Header
-    
-    # Check requirements
-    Check-Rust
-    Check-Git
-    Check-BuildTools
-    
-    # Install
-    Setup-Repo
-    Build-Lattice
+    Get-LatestRelease
     Install-Binaries
     Setup-Path
     Create-Config
     Create-Shortcuts
-    
-    # Optional tests
-    Run-Tests
-    
-    # Done!
     Print-Completion
 }
 
-# Run main function
 try {
     Main
 } catch {
@@ -378,3 +252,4 @@ try {
     Write-Host $_.ScriptStackTrace
     exit 1
 }
+

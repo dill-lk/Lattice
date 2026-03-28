@@ -153,12 +153,14 @@ async fn handle_rpc(
     match serde_json::from_str::<RpcRequest>(&body) {
         Ok(request) => {
             let response = process_request(&state.handlers, request);
-            (StatusCode::OK, Json(response))
+            let value = serde_json::to_value(response).unwrap_or_default();
+            (StatusCode::OK, Json(value))
         }
         Err(e) => {
             error!("Failed to parse RPC request: {}", e);
             let response = RpcResponse::error(serde_json::Value::Null, RpcError::parse_error());
-            (StatusCode::OK, Json(response))
+            let value = serde_json::to_value(response).unwrap_or_default();
+            (StatusCode::OK, Json(value))
         }
     }
 }

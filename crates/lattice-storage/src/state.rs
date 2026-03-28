@@ -6,12 +6,11 @@
 //! - State root computation
 
 use crate::error::{Result, StorageError};
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::BorshDeserialize;
 use lattice_core::{Account, Address, BlockHeight, Hash};
 use parking_lot::RwLock;
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, WriteBatch, DB};
 use sha3::{Digest, Sha3_256};
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};

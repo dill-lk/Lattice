@@ -12,12 +12,12 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::Parser;
 use parking_lot::RwLock;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
 
 use config::{NodeConfig, parse_network};
 use lattice_core::{Block, BlockHeader, Transaction, Address, Network, BlockHeight, Hash};
-use lattice_consensus::{Miner, MinerBuilder, MiningResult, DifficultyAdjuster};
+use lattice_consensus::{MinerBuilder, MiningResult, DifficultyAdjuster, PoWConfig};
 use lattice_crypto::sha3_256;
 use lattice_storage::{BlockStore, StateStore, MempoolStore};
 use lattice_rpc::{RpcServer, RpcConfig as RpcServerConfig, RpcHandlers, ChainState};
@@ -195,7 +195,7 @@ fn create_genesis_block(network: Network) -> Block {
             Network::Devnet => 1,
         },
         nonce: 0,
-        coinbase: Address::default(),
+        coinbase: Address::zero(),
     };
 
     Block {
@@ -247,7 +247,7 @@ async fn run_miner(
                 Ok(bytes) if bytes.len() == 20 => {
                     let mut arr = [0u8; 20];
                     arr.copy_from_slice(&bytes);
-                    Address(arr)
+                    Address::from_bytes(arr)
                 }
                 _ => {
                     tracing::error!("Invalid coinbase address: {}", addr);
@@ -262,7 +262,7 @@ async fn run_miner(
     };
 
     tracing::info!("Miner started with {} threads, coinbase: 0x{}", 
-        config.threads, hex::encode(coinbase.0));
+        config.threads, hex::encode(coinbase.as_bytes()));
 
     let miner = MinerBuilder::new()
         .threads(config.threads)

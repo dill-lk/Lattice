@@ -6,7 +6,7 @@
 //! - Latest block tracking
 
 use crate::error::{Result, StorageError};
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::BorshDeserialize;
 use lattice_core::{Block, BlockHeight, Hash};
 use parking_lot::RwLock;
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, DB};

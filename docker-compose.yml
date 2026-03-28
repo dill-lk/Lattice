@@ -1,0 +1,117 @@
+version: '3.8'
+
+services:
+  # Lattice Node 1 (Bootstrap)
+  node1:
+    build: .
+    container_name: lattice-node-1
+    ports:
+      - "8545:8545"
+      - "30333:30333"
+    volumes:
+      - node1-data:/data
+      - ./config:/data/config:ro
+    environment:
+      - RUST_LOG=info
+      - NODE_NAME=node1
+    networks:
+      - lattice-network
+    restart: unless-stopped
+
+  # Lattice Node 2
+  node2:
+    build: .
+    container_name: lattice-node-2
+    ports:
+      - "8546:8545"
+      - "30334:30333"
+    volumes:
+      - node2-data:/data
+      - ./config:/data/config:ro
+    environment:
+      - RUST_LOG=info
+      - NODE_NAME=node2
+      - BOOTSTRAP_NODE=/dns4/node1/tcp/30333/p2p/12D3KooW...
+    networks:
+      - lattice-network
+    depends_on:
+      - node1
+    restart: unless-stopped
+
+  # Lattice Node 3
+  node3:
+    build: .
+    container_name: lattice-node-3
+    ports:
+      - "8547:8545"
+      - "30335:30333"
+    volumes:
+      - node3-data:/data
+      - ./config:/data/config:ro
+    environment:
+      - RUST_LOG=info
+      - NODE_NAME=node3
+      - BOOTSTRAP_NODE=/dns4/node1/tcp/30333/p2p/12D3KooW...
+    networks:
+      - lattice-network
+    depends_on:
+      - node1
+    restart: unless-stopped
+
+  # Miner
+  miner:
+    build: .
+    container_name: lattice-miner
+    command: ["lattice-miner", "--rpc", "http://node1:8545", "--threads", "4"]
+    environment:
+      - RUST_LOG=info
+    networks:
+      - lattice-network
+    depends_on:
+      - node1
+    restart: unless-stopped
+
+  # Prometheus (Monitoring)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: lattice-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - lattice-network
+    restart: unless-stopped
+
+  # Grafana (Dashboards)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: lattice-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - lattice-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  lattice-network:
+    driver: bridge

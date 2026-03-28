@@ -93,7 +93,7 @@ pub fn compute_pow_hash(header: &BlockHeader, nonce: u64, config: &PoWConfig) ->
         .map_err(|e| PoWError::Argon2Error(e.to_string()))?;
 
     // Final SHA3 mixing to ensure uniformity
-    let final_hash = Sha3_256::digest(&output);
+    let final_hash = Sha3_256::digest(output);
     let mut result = [0u8; 32];
     result.copy_from_slice(&final_hash);
 
@@ -161,11 +161,6 @@ fn compare_hash_to_target(hash: &Hash, target: &Hash) -> bool {
         }
     }
     true // Equal
-}
-
-/// Calculate the hash rate difficulty multiplier
-pub fn difficulty_multiplier(difficulty: u64) -> f64 {
-    difficulty as f64
 }
 
 /// Estimate hashes needed to find a valid block

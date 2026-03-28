@@ -39,8 +39,10 @@ pub const KYBER_CIPHERTEXT_SIZE: usize = 1088;
 pub const SHARED_SECRET_SIZE: usize = 32;
 
 /// Kyber public key for key encapsulation
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct KyberPublicKey(kyber768::PublicKey);
+
+impl Eq for KyberPublicKey {}
 
 impl KyberPublicKey {
     /// Create from raw bytes

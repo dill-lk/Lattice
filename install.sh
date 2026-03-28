@@ -1,6 +1,6 @@
 #!/bin/bash
 # Lattice Blockchain - One-Click Installer for Linux/macOS
-# This script installs Lattice blockchain and all its dependencies
+# Downloads pre-built binaries from GitHub Releases
 
 set -e
 
@@ -13,10 +13,9 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.lattice}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
-REPO_URL="https://github.com/lattice-chain/lattice"
-MIN_RUST_VERSION="1.70.0"
+GITHUB_REPO="dill-lk/Lattice"
+GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 
 # Helper functions
 print_header() {
@@ -56,197 +55,140 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Version comparison
-version_ge() {
-    [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]
-}
+# Detect OS and architecture, set ASSET_NAME
+detect_platform() {
+    print_step "Detecting platform..."
 
-# Detect OS
-detect_os() {
-    case "$(uname -s)" in
-        Linux*)     OS=Linux;;
-        Darwin*)    OS=Mac;;
-        *)          OS="UNKNOWN";;
+    local os arch
+
+    os=$(uname -s)
+    arch=$(uname -m)
+
+    case "$os" in
+        Linux*)
+            case "$arch" in
+                x86_64) ASSET_NAME="lattice-linux-amd64.tar.gz" ;;
+                *) print_error "Unsupported architecture: $arch (only x86_64 is supported)"; exit 1 ;;
+            esac
+            ;;
+        Darwin*)
+            # x86_64 binary runs on Apple Silicon via Rosetta 2
+            ASSET_NAME="lattice-macos-amd64.tar.gz"
+            if [ "$arch" = "arm64" ]; then
+                print_warning "Apple Silicon detected — using x86_64 binary via Rosetta 2"
+            fi
+            ;;
+        *)
+            print_error "Unsupported OS: $os"; exit 1 ;;
     esac
-    print_info "Detected OS: $OS"
+
+    print_success "Platform: $os $arch → $ASSET_NAME"
 }
 
-# Check Rust installation
-check_rust() {
-    print_step "Checking Rust installation..."
-    
-    if ! command_exists rustc; then
-        print_warning "Rust is not installed"
-        read -p "Install Rust now? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            install_rust
-        else
-            print_error "Rust is required. Exiting."
-            exit 1
-        fi
+# Fetch latest release tag and download URL
+fetch_release() {
+    print_step "Fetching latest release from GitHub..."
+
+    local release_json
+
+    if command_exists curl; then
+        release_json=$(curl -fsSL "$GITHUB_API")
+    elif command_exists wget; then
+        release_json=$(wget -qO- "$GITHUB_API")
     else
-        RUST_VERSION=$(rustc --version | awk '{print $2}')
-        print_success "Rust $RUST_VERSION is installed"
-        
-        if ! version_ge "$RUST_VERSION" "$MIN_RUST_VERSION"; then
-            print_warning "Rust version $RUST_VERSION is below minimum $MIN_RUST_VERSION"
-            print_info "Updating Rust..."
-            rustup update stable
-        fi
+        print_error "curl or wget is required to download Lattice"; exit 1
     fi
-}
 
-# Install Rust
-install_rust() {
-    print_step "Installing Rust..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source "$HOME/.cargo/env"
-    print_success "Rust installed successfully"
-}
+    RELEASE_TAG=$(echo "$release_json" | grep '"tag_name"' | head -1 \
+        | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
 
-# Check build dependencies
-check_dependencies() {
-    print_step "Checking build dependencies..."
-    
-    local missing_deps=()
-    
-    # Required dependencies
-    if ! command_exists git; then
-        missing_deps+=("git")
-    fi
-    
-    if ! command_exists pkg-config; then
-        missing_deps+=("pkg-config")
-    fi
-    
-    if ! command_exists gcc || ! command_exists clang; then
-        missing_deps+=("gcc or clang")
-    fi
-    
-    if [ ${#missing_deps[@]} -eq 0 ]; then
-        print_success "All dependencies are installed"
-    else
-        print_warning "Missing dependencies: ${missing_deps[*]}"
-        install_dependencies "${missing_deps[@]}"
-    fi
-}
+    DOWNLOAD_URL=$(echo "$release_json" | grep '"browser_download_url"' \
+        | grep "$ASSET_NAME" | head -1 \
+        | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/')
 
-# Install dependencies
-install_dependencies() {
-    print_step "Installing dependencies..."
-    
-    if command_exists apt-get; then
-        # Debian/Ubuntu
-        sudo apt-get update
-        sudo apt-get install -y build-essential git pkg-config libssl-dev
-    elif command_exists dnf; then
-        # Fedora
-        sudo dnf install -y gcc git pkg-config openssl-devel
-    elif command_exists pacman; then
-        # Arch Linux
-        sudo pacman -Sy --noconfirm base-devel git pkg-config openssl
-    elif command_exists brew; then
-        # macOS
-        brew install git pkg-config openssl
-    else
-        print_error "Could not detect package manager. Please install dependencies manually:"
-        print_info "  - git"
-        print_info "  - pkg-config"
-        print_info "  - gcc/clang"
-        print_info "  - OpenSSL development headers"
+    if [ -z "$RELEASE_TAG" ]; then
+        print_error "Could not determine latest release tag. Check your internet connection."
         exit 1
     fi
-    
-    print_success "Dependencies installed"
-}
 
-# Clone or update repository
-setup_repo() {
-    print_step "Setting up Lattice repository..."
-    
-    if [ -d "$INSTALL_DIR" ]; then
-        print_info "Repository exists. Updating..."
-        cd "$INSTALL_DIR"
-        git pull origin main
-    else
-        print_info "Cloning repository..."
-        git clone "$REPO_URL" "$INSTALL_DIR"
-        cd "$INSTALL_DIR"
+    if [ -z "$DOWNLOAD_URL" ]; then
+        print_error "No pre-built binary found for $ASSET_NAME in release $RELEASE_TAG."
+        print_info "See https://github.com/${GITHUB_REPO}/releases for available assets."
+        exit 1
     fi
-    
-    print_success "Repository ready"
+
+    print_success "Latest release: $RELEASE_TAG"
 }
 
-# Build Lattice
-build_lattice() {
-    print_step "Building Lattice (this may take a while)..."
-    
-    cd "$INSTALL_DIR"
-    
-    # Show progress
-    cargo build --release --bins 2>&1 | while IFS= read -r line; do
-        if [[ $line == *"Compiling"* ]]; then
-            echo -e "${CYAN}  → ${line}${NC}"
+# Download archive and install binaries
+download_and_install() {
+    print_step "Downloading $ASSET_NAME..."
+
+    local tmp_dir tmp_archive
+    tmp_dir=$(mktemp -d)
+    tmp_archive="$tmp_dir/$ASSET_NAME"
+
+    if command_exists curl; then
+        curl -fsSL --progress-bar -o "$tmp_archive" "$DOWNLOAD_URL"
+    else
+        wget -q --show-progress -O "$tmp_archive" "$DOWNLOAD_URL"
+    fi
+
+    print_success "Download complete"
+    print_step "Installing binaries to $BIN_DIR..."
+
+    mkdir -p "$BIN_DIR"
+    tar xzf "$tmp_archive" -C "$tmp_dir"
+
+    local installed=0
+    for bin in lattice-node lattice-cli lattice-miner; do
+        if [ -f "$tmp_dir/$bin" ]; then
+            cp "$tmp_dir/$bin" "$BIN_DIR/$bin"
+            chmod +x "$BIN_DIR/$bin"
+            installed=$((installed + 1))
         fi
     done
-    
-    print_success "Build completed"
+
+    rm -rf "$tmp_dir"
+
+    if [ "$installed" -eq 0 ]; then
+        print_error "No binaries were found in the archive. The release may be incomplete."
+        exit 1
+    fi
+
+    print_success "Installed $installed binaries to $BIN_DIR"
 }
 
-# Install binaries
-install_binaries() {
-    print_step "Installing binaries..."
-    
-    mkdir -p "$BIN_DIR"
-    
-    # Copy binaries
-    cp "$INSTALL_DIR/target/release/lattice-node" "$BIN_DIR/"
-    cp "$INSTALL_DIR/target/release/lattice-cli" "$BIN_DIR/"
-    cp "$INSTALL_DIR/target/release/lattice-miner" "$BIN_DIR/"
-    
-    # Make executable
-    chmod +x "$BIN_DIR/lattice-node"
-    chmod +x "$BIN_DIR/lattice-cli"
-    chmod +x "$BIN_DIR/lattice-miner"
-    
-    print_success "Binaries installed to $BIN_DIR"
-}
-
-# Add to PATH
+# Add BIN_DIR to PATH if needed
 setup_path() {
     print_step "Setting up PATH..."
-    
-    # Check if BIN_DIR is in PATH
+
     if [[ ":$PATH:" == *":$BIN_DIR:"* ]]; then
         print_success "PATH already configured"
         return
     fi
-    
-    # Detect shell
-    if [ -n "$BASH_VERSION" ]; then
-        SHELL_RC="$HOME/.bashrc"
-    elif [ -n "$ZSH_VERSION" ]; then
-        SHELL_RC="$HOME/.zshrc"
+
+    local shell_rc
+    if [ -n "$ZSH_VERSION" ]; then
+        shell_rc="$HOME/.zshrc"
+    elif [ -n "$BASH_VERSION" ]; then
+        shell_rc="$HOME/.bashrc"
     else
-        SHELL_RC="$HOME/.profile"
+        shell_rc="$HOME/.profile"
     fi
-    
-    # Add to PATH
-    echo "" >> "$SHELL_RC"
-    echo "# Lattice Blockchain" >> "$SHELL_RC"
-    echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$SHELL_RC"
-    
-    print_success "Added to PATH in $SHELL_RC"
-    print_warning "Please restart your shell or run: source $SHELL_RC"
+
+    printf '\n# Lattice Blockchain\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >> "$shell_rc"
+
+    print_success "Added $BIN_DIR to PATH in $shell_rc"
+    print_warning "Restart your shell or run: source $shell_rc"
 }
 
-# Create configuration
+# Create default configuration
 create_config() {
     print_step "Creating default configuration..."
-    
+
     mkdir -p "$HOME/.lattice/config"
-    
+
     cat > "$HOME/.lattice/config/node.toml" <<EOF
 # Lattice Node Configuration
 
@@ -276,23 +218,8 @@ db_path = "$HOME/.lattice/data"
 # Cache size in MB
 cache_size = 256
 EOF
-    
-    print_success "Configuration created at $HOME/.lattice/config/node.toml"
-}
 
-# Run tests
-run_tests() {
-    print_step "Running tests (optional)..."
-    
-    read -p "Run test suite? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        cd "$INSTALL_DIR"
-        cargo test --all --release
-        print_success "All tests passed!"
-    else
-        print_info "Skipping tests"
-    fi
+    print_success "Configuration created at $HOME/.lattice/config/node.toml"
 }
 
 # Print completion message
@@ -305,6 +232,7 @@ print_completion() {
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${CYAN}📍 Installation Details:${NC}"
+    echo -e "   ${BLUE}•${NC} Version:  $RELEASE_TAG"
     echo -e "   ${BLUE}•${NC} Binaries: $BIN_DIR"
     echo -e "   ${BLUE}•${NC} Config:   $HOME/.lattice/config"
     echo -e "   ${BLUE}•${NC} Data:     $HOME/.lattice/data"
@@ -324,37 +252,23 @@ print_completion() {
     echo -e "      ${BLUE}lattice-miner --threads 4${NC}"
     echo ""
     echo -e "${CYAN}📚 Documentation:${NC}"
-    echo -e "   ${BLUE}•${NC} README: $INSTALL_DIR/README.md"
-    echo -e "   ${BLUE}•${NC} Docs:   https://docs.latticechain.io"
+    echo -e "   ${BLUE}•${NC} Docs:   https://github.com/${GITHUB_REPO}"
     echo ""
     echo -e "${CYAN}💡 Need help?${NC}"
-    echo -e "   ${BLUE}•${NC} GitHub:  https://github.com/lattice-chain/lattice"
-    echo -e "   ${BLUE}•${NC} Discord: https://discord.gg/lattice"
+    echo -e "   ${BLUE}•${NC} GitHub: https://github.com/${GITHUB_REPO}"
     echo ""
 }
 
 # Main installation flow
 main() {
     print_header
-    
-    # Check requirements
-    detect_os
-    check_rust
-    check_dependencies
-    
-    # Install
-    setup_repo
-    build_lattice
-    install_binaries
+    detect_platform
+    fetch_release
+    download_and_install
     setup_path
     create_config
-    
-    # Optional tests
-    run_tests
-    
-    # Done!
     print_completion
 }
 
-# Run main function
 main "$@"
+

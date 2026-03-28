@@ -431,7 +431,7 @@ impl ChainSync {
             // Find a block whose parent is expected_hash
             for entry in self.received_blocks.iter() {
                 if entry.value().header.prev_hash == expected_hash {
-                    found = Some(entry.key().clone());
+                    found = Some(*entry.key());
                     break;
                 }
             }
@@ -551,20 +551,18 @@ impl ChainSync {
         let local_height = *self.local_height.read();
 
         // If block is far ahead, we need to sync
-        if block.height() > local_height + 1 {
-            if !self.is_syncing() {
-                peer_manager.update_peer_height(&peer, block.height());
-                *self.target_height.write() = block.height();
-                *self.state.write() = SyncState::DownloadingHeaders;
+        if block.height() > local_height + 1 && !self.is_syncing() {
+            peer_manager.update_peer_height(&peer, block.height());
+            *self.target_height.write() = block.height();
+            *self.state.write() = SyncState::DownloadingHeaders;
 
-                return Some((
-                    peer,
-                    SyncRequest::GetHeaders {
-                        start_hash: *self.local_hash.read(),
-                        max_headers: self.config.max_headers_fetch,
-                    },
-                ));
-            }
+            return Some((
+                peer,
+                SyncRequest::GetHeaders {
+                    start_hash: *self.local_hash.read(),
+                    max_headers: self.config.max_headers_fetch,
+                },
+            ));
         }
 
         None

@@ -57,7 +57,7 @@ pub fn import_from_private_key(private_key: &str, output: &str) -> Result<()> {
     let secret_bytes = hex::decode(key_hex).map_err(|_| anyhow!("Invalid hex encoding"))?;
 
     // Reconstruct keypair from secret key
-    let secret = lattice_crypto::SecretKey::from_bytes(&secret_bytes)
+    let _secret = lattice_crypto::SecretKey::from_bytes(&secret_bytes)
         .map_err(|_| anyhow!("Invalid secret key format"))?;
 
     // We need both public and secret keys - regenerate public from the original keypair
@@ -70,7 +70,7 @@ pub fn import_from_private_key(private_key: &str, output: &str) -> Result<()> {
 }
 
 /// Import wallet from mnemonic phrase
-pub fn import_from_mnemonic(mnemonic: &str, output: &str) -> Result<()> {
+pub fn import_from_mnemonic(_mnemonic: &str, output: &str) -> Result<()> {
     let path = Path::new(output);
 
     if path.exists() {

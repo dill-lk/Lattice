@@ -1,6 +1,6 @@
 //! Transaction command handlers
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use lattice_core::{Address, Transaction};
 use lattice_wallet::TransactionBuilder;
 

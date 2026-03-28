@@ -285,6 +285,6 @@ mod tests {
         let health = checker.check_all().await;
         
         assert!(!health.components.is_empty());
-        assert!(health.uptime_seconds >= 0);
+        assert!(health.uptime_seconds < 60);
     }
 }

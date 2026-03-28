@@ -1,5 +1,4 @@
 # ⛏️ Lattice - Mine Quantum-Resistant Cryptocurrency
-<img width="300" height="300" alt="lattice" src="https://github.com/user-attachments/assets/a28ce394-f794-408c-bf6f-d7d6cfdcd6b6" />
 
 **Start earning LAT tokens today! CPU-friendly mining, no expensive GPUs needed.**
 

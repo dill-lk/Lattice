@@ -1,4 +1,5 @@
 # Lattice
+<<<<<<< HEAD
 
 A quantum-resistant blockchain written in Rust.
 
@@ -80,3 +81,6 @@ lattice/
 ## License
 
 MIT OR Apache-2.0
+=======
+Lattice the Quantum resistant blockchain
+>>>>>>> ffdb41948a62cff8625ce39ce1845afd11645c85

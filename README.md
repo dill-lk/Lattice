@@ -1,5 +1,4 @@
 # Lattice
-<<<<<<< HEAD
 
 A quantum-resistant blockchain written in Rust.
 

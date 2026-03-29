@@ -796,15 +796,15 @@ async fn main() -> anyhow::Result<()> {
     // Initialize storage
     tracing::info!("Opening storage...");
     let block_store = Arc::new(
-        BlockStore::open(&config.blocks_db_path())
+        BlockStore::open(config.blocks_db_path())
             .context("Failed to open block store")?
     );
     let state_store = Arc::new(
-        StateStore::open(&config.state_db_path())
+        StateStore::open(config.state_db_path())
             .context("Failed to open state store")?
     );
     let mempool = Arc::new(
-        MempoolStore::open(&config.mempool_db_path())
+        MempoolStore::open(config.mempool_db_path())
             .context("Failed to open mempool")?
     );
 

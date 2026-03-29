@@ -91,8 +91,9 @@ impl MerkleTree {
         let mut nodes = vec![leaves.clone()];
         let mut current_level = leaves.clone();
 
-        // Build tree bottom-up
-        while current_level.len() > 1 {
+        // Build tree bottom-up, always running at least one hash step so
+        // a single-leaf tree produces root = hash_pair(leaf, leaf).
+        loop {
             let mut next_level = Vec::new();
 
             for chunk in current_level.chunks(2) {
@@ -107,6 +108,9 @@ impl MerkleTree {
 
             nodes.push(next_level.clone());
             current_level = next_level;
+            if current_level.len() <= 1 {
+                break;
+            }
         }
 
         Self { nodes, leaves }
@@ -231,17 +235,15 @@ impl SparseMerkleTree {
     /// Generate a proof for a key
     pub fn generate_proof(&self, key: &[u8; 32]) -> Vec<Hash> {
         let mut proof = Vec::new();
-        let mut path = Vec::new();
 
-        for i in 0..self.depth {
-            let bit = (key[i / 8] >> (7 - (i % 8))) & 1;
-            path.push(bit == 1);
-
-            let sibling_path = Self::sibling_path(&path);
-            let sibling_hash = self.get_node(&sibling_path, i + 1);
+        // Collect siblings from leaf level up to root (bottom-up order).
+        // proof[0] = sibling at leaf level (depth self.depth),
+        // proof[depth-1] = sibling one level below root (depth 1).
+        for depth in (0..self.depth).rev() {
+            let path_to_node = Self::key_to_path(key, depth + 1);
+            let sibling_path = Self::sibling_path(&path_to_node);
+            let sibling_hash = self.get_node(&sibling_path, depth + 1);
             proof.push(sibling_hash);
-
-            path.push(bit == 1);
         }
 
         proof
@@ -251,12 +253,16 @@ impl SparseMerkleTree {
     pub fn verify_proof(&self, key: &[u8; 32], value: &Hash, proof: &[Hash]) -> bool {
         let mut current_hash = *value;
 
+        // Traverse from leaf to root (bottom-up), matching proof order.
         for (i, sibling_hash) in proof.iter().enumerate() {
-            let bit = (key[i / 8] >> (7 - (i % 8))) & 1;
-            current_hash = if bit == 1 {
-                hash_pair(sibling_hash, &current_hash)
-            } else {
+            let bit_pos = self.depth - 1 - i;
+            let bit = (key[bit_pos / 8] >> (7 - (bit_pos % 8))) & 1;
+            current_hash = if bit == 0 {
+                // current node is the left child
                 hash_pair(&current_hash, sibling_hash)
+            } else {
+                // current node is the right child
+                hash_pair(sibling_hash, &current_hash)
             };
         }
 

@@ -303,12 +303,16 @@ impl ShardManager {
                 moved_addresses += 1;
             }
             
-            // Recalculate loads
+            // Transfer load directly from overloaded to underloaded shard to converge
+            let from_load = self.shards.get(&from_shard).map(|s| s.load).unwrap_or(0.0);
+            let to_load = self.shards.get(&to_shard).map(|s| s.load).unwrap_or(0.0);
+            let transfer = (from_load - target_load).min(target_load - to_load).max(0.0);
+            
             if let Some(shard) = self.shards.get_mut(&from_shard) {
-                shard.load *= 0.9;  // Reduce load
+                shard.load -= transfer;
             }
             if let Some(shard) = self.shards.get_mut(&to_shard) {
-                shard.load *= 1.1;  // Increase load
+                shard.load += transfer;
             }
             
             // Update lists

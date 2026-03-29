@@ -13,10 +13,10 @@ use crate::{CryptoError, Result};
 pub const PUBLIC_KEY_SIZE: usize = 1952;
 
 /// Size of a Dilithium3 secret key in bytes
-pub const SECRET_KEY_SIZE: usize = 4016;
+pub const SECRET_KEY_SIZE: usize = 4032;
 
 /// Size of a Dilithium3 signature in bytes
-pub const SIGNATURE_SIZE: usize = 3293;
+pub const SIGNATURE_SIZE: usize = 3309;
 
 /// Dilithium public key for signature verification
 #[derive(Clone, PartialEq)]

@@ -56,9 +56,11 @@ impl PartialOrd for TxEntry {
 impl Ord for TxEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Higher fee per gas = higher priority
+        // For equal fee per gas, prefer higher absolute fee
         // For equal fees, prefer older transactions (FIFO)
         self.fee_per_gas
             .cmp(&other.fee_per_gas)
+            .then_with(|| self.fee.cmp(&other.fee))
             .then_with(|| other.inserted_at.cmp(&self.inserted_at))
     }
 }
@@ -294,7 +296,7 @@ impl MempoolStore {
             let index = self.index.read();
             let mut entries: Vec<_> = index.values().cloned().collect();
             // Sort by priority (ascending, so lowest priority first)
-            entries.sort_by(|a, b| a.cmp(b));
+            entries.sort();
 
             for entry in entries.into_iter().take(count) {
                 to_remove.push(entry.hash);

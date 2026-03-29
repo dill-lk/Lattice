@@ -3,17 +3,19 @@
 //! A multi-threaded CPU miner for the Lattice blockchain.
 //! Connects to a node via JSON-RPC to fetch work and submit solutions.
 
+mod display;
 mod rpc_client;
 mod stats;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use display::MinerEvent;
 use lattice_consensus::{Miner, MiningResult, PoWConfig};
 use lattice_core::Address;
 use parking_lot::RwLock;
 use rpc_client::{RpcClient, WorkSolution, WorkTemplate};
 use stats::MiningStats;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -42,7 +44,7 @@ struct Args {
     #[arg(long, default_value = "1000")]
     poll_interval: u64,
 
-    /// Statistics display interval in seconds
+    /// Statistics display interval in seconds (non-TTY mode only)
     #[arg(long, default_value = "10")]
     stats_interval: u64,
 
@@ -57,6 +59,8 @@ struct SolutionFound {
     work_id: String,
     nonce: u64,
     pow_hash: [u8; 32],
+    /// Block height at which the solution was found (for display)
+    height: u64,
 }
 
 /// Shared state for the mining coordinator
@@ -81,49 +85,47 @@ impl MinerState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
+    let args = Args::parse();
+
+    // Route tracing logs to stderr so they don't interleave with the live
+    // stats line that display_loop writes to stdout.
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::from_default_env()
                 .add_directive("lattice_miner=info".parse().unwrap())
                 .add_directive("lattice_consensus=debug".parse().unwrap()),
         )
+        .with_writer(std::io::stderr)
         .init();
 
-    let args = Args::parse();
-
-    // Parse coinbase address
+    // Validate coinbase address before printing the banner.
     let coinbase = Address::from_base58(&args.coinbase)
         .map_err(|e| anyhow!("Invalid coinbase address: {}", e))?;
 
-    // Determine thread count
     let num_threads = if args.threads == 0 {
         num_cpus::get()
     } else {
         args.threads
     };
 
-    info!("╔═══════════════════════════════════════════╗");
-    info!("║         Lattice Miner v{}          ║", env!("CARGO_PKG_VERSION"));
-    info!("╠═══════════════════════════════════════════╣");
-    info!("║  Threads:  {:<30} ║", num_threads);
-    info!("║  Coinbase: {}...  ║", &args.coinbase[..20.min(args.coinbase.len())]);
-    info!("║  RPC:      {:<30} ║", &args.rpc[..30.min(args.rpc.len())]);
-    info!("╚═══════════════════════════════════════════╝");
+    // Print the startup banner directly to stdout (no log prefix / timestamp).
+    display::print_banner(
+        env!("CARGO_PKG_VERSION"),
+        num_threads,
+        &args.coinbase,
+        &args.rpc,
+    );
 
-    // Initialize components
+    // Display event channel — all worker tasks send events here; the display
+    // loop owns stdout and serialises all output.
+    let (event_tx, event_rx) = mpsc::channel::<MinerEvent>(64);
+
+    // Shared current block height used by the live stats line.
+    let current_height = Arc::new(AtomicU64::new(0));
+
     let rpc_client = Arc::new(RpcClient::new(&args.rpc).context("Failed to create RPC client")?);
     let stats = MiningStats::new();
     let state = MinerState::new();
-
-    // Test RPC connection
-    info!("Connecting to node at {}...", args.rpc);
-    match rpc_client.block_number().await {
-        Ok(height) => info!("Connected! Current block height: {}", height),
-        Err(e) => {
-            warn!("Could not connect to node: {}. Will retry...", e);
-        }
-    }
 
     // Create solution channel
     let (solution_tx, mut solution_rx) = mpsc::channel::<SolutionFound>(32);
@@ -136,17 +138,20 @@ async fn main() -> Result<()> {
         PoWConfig::default()
     };
 
-    // Spawn work polling task
+    // ── Spawn tasks ──────────────────────────────────────────────────────────
+
+    // Work polling: fetches new block templates from the node.
     let poll_state = Arc::clone(&state);
     let poll_rpc = Arc::clone(&rpc_client);
     let poll_coinbase = coinbase.clone();
     let poll_interval = Duration::from_millis(args.poll_interval);
-    
+    let poll_event_tx = event_tx.clone();
+
     let poll_handle = tokio::spawn(async move {
-        work_polling_loop(poll_state, poll_rpc, poll_coinbase, poll_interval).await
+        work_polling_loop(poll_state, poll_rpc, poll_coinbase, poll_interval, poll_event_tx).await
     });
 
-    // Spawn mining threads
+    // Mining threads: CPU-intensive, run on a dedicated OS thread.
     let mining_state = Arc::clone(&state);
     let mining_stats = Arc::clone(&stats);
     let mining_handle = std::thread::spawn(move || {
@@ -159,110 +164,116 @@ async fn main() -> Result<()> {
         )
     });
 
-    // Spawn solution submission task
+    // Solution submission: takes found nonces and submits them to the node.
     let submit_rpc = Arc::clone(&rpc_client);
     let submit_stats = Arc::clone(&stats);
-    
+    let submit_event_tx = event_tx.clone();
+
     let submit_handle = tokio::spawn(async move {
         while let Some(solution) = solution_rx.recv().await {
-            handle_solution(
-                &submit_rpc,
-                &submit_stats,
-                solution,
-            )
-            .await;
+            handle_solution(&submit_rpc, &submit_stats, solution, &submit_event_tx).await;
         }
     });
 
-    // Spawn stats display task
+    // Display loop: owns all stdout output after the banner.
     let display_stats = Arc::clone(&stats);
-    let display_state = Arc::clone(&state);
-    let stats_interval = Duration::from_secs(args.stats_interval);
-    
-    let stats_handle = tokio::spawn(async move {
-        stats_display_loop(display_stats, display_state, stats_interval).await
-    });
+    let display_height = Arc::clone(&current_height);
+    let display_handle = tokio::spawn(display::display_loop(
+        event_rx,
+        display_stats,
+        display_height,
+        args.stats_interval,
+    ));
 
-    // Wait for Ctrl+C
+    // ── Wait for Ctrl+C ───────────────────────────────────────────────────────
     info!("Miner started. Press Ctrl+C to stop.");
     tokio::signal::ctrl_c().await?;
 
-    // Shutdown
-    info!("Shutting down miner...");
+    // ── Graceful shutdown ────────────────────────────────────────────────────
+    info!("Shutting down miner…");
     state.shutdown.store(true, Ordering::SeqCst);
 
-    // Wait for tasks to complete
     poll_handle.abort();
     submit_handle.abort();
-    stats_handle.abort();
-
-    // Wait for mining thread
+    // Drop event_tx so the display loop's receiver closes and the task ends.
+    drop(event_tx);
+    let _ = display_handle.await;
     let _ = mining_handle.join();
 
-    // Print final stats
-    let final_stats = stats.snapshot();
-    info!("╔═══════════════════════════════════════════╗");
-    info!("║            Final Statistics               ║");
-    info!("╠═══════════════════════════════════════════╣");
-    info!("║  Uptime:       {:<26} ║", stats.uptime_string());
-    info!("║  Total hashes: {:<26} ║", final_stats.total_hashes);
-    info!("║  Avg hashrate: {:<26} ║", MiningStats::format_hash_rate(final_stats.average_hash_rate));
-    info!("║  Blocks found: {:<26} ║", final_stats.blocks_found);
-    info!("╚═══════════════════════════════════════════╝");
+    // Print final session summary directly to stdout.
+    display::print_final_stats(&stats);
 
     info!("Miner stopped.");
     Ok(())
 }
 
-/// Poll the node for new work
+// ── Work polling ─────────────────────────────────────────────────────────────
+
+/// Poll the node for new work and update the shared work template.
 async fn work_polling_loop(
     state: Arc<MinerState>,
     rpc: Arc<RpcClient>,
     coinbase: Address,
     interval: Duration,
+    event_tx: mpsc::Sender<MinerEvent>,
 ) {
     let mut consecutive_errors = 0u32;
+    let mut connected = false;
 
     while !state.shutdown.load(Ordering::Relaxed) {
         match rpc.get_work(&coinbase).await {
             Ok(work) => {
-                consecutive_errors = 0;
-                let new_height = work.header.height;
+                if !connected || consecutive_errors > 0 {
+                    connected = true;
+                    consecutive_errors = 0;
+                    let height = work.header.height;
+                    let _ = event_tx.send(MinerEvent::NodeConnected { height }).await;
+                }
 
-                // Check if work has changed
+                let new_height = work.header.height;
+                let new_difficulty = work.header.difficulty;
+                let tx_count = work.tx_count;
+
                 let should_update = {
                     let current = state.current_work.read();
                     match &*current {
-                        Some(existing) => existing.header.height != new_height
-                            || existing.header.prev_hash != work.header.prev_hash,
+                        Some(existing) => {
+                            existing.header.height != new_height
+                                || existing.header.prev_hash != work.header.prev_hash
+                        }
                         None => true,
                     }
                 };
 
                 if should_update {
-                    info!(
+                    debug!(
                         "New work: height={}, difficulty={}, txs={}",
-                        new_height, work.header.difficulty, work.tx_count
+                        new_height, new_difficulty, tx_count
                     );
-
                     *state.current_work.write() = Some(work);
                     state.work_updated.store(true, Ordering::SeqCst);
+
+                    let _ = event_tx
+                        .send(MinerEvent::WorkUpdate {
+                            height: new_height,
+                            difficulty: new_difficulty,
+                            tx_count,
+                        })
+                        .await;
                 }
             }
             Err(e) => {
                 consecutive_errors += 1;
                 let backoff = Duration::from_millis(
-                    (interval.as_millis() as u64) * consecutive_errors.min(10) as u64,
+                    interval.as_millis() as u64 * consecutive_errors.min(10) as u64,
                 );
 
-                if consecutive_errors <= 3 {
-                    debug!("Failed to get work: {} (retry in {:?})", e, backoff);
-                } else {
-                    warn!(
-                        "Failed to get work (attempt {}): {} (retry in {:?})",
-                        consecutive_errors, e, backoff
-                    );
-                }
+                debug!("Failed to get work: {} (retry in {:?})", e, backoff);
+                let _ = event_tx
+                    .send(MinerEvent::NodeError {
+                        attempt: consecutive_errors,
+                    })
+                    .await;
 
                 tokio::time::sleep(backoff).await;
                 continue;
@@ -273,7 +284,9 @@ async fn work_polling_loop(
     }
 }
 
-/// Main mining loop running on dedicated threads
+// ── Mining loop ───────────────────────────────────────────────────────────────
+
+/// Main mining loop — runs on a dedicated OS thread.
 fn mining_loop(
     state: Arc<MinerState>,
     stats: Arc<MiningStats>,
@@ -284,34 +297,29 @@ fn mining_loop(
     let miner = Miner::new(pow_config).with_threads(num_threads);
 
     while !state.shutdown.load(Ordering::Relaxed) {
-        // Wait for work
+        // Wait until work is available.
         let work = loop {
             if state.shutdown.load(Ordering::Relaxed) {
                 return;
             }
-
             if let Some(work) = state.current_work.read().clone() {
                 state.work_updated.store(false, Ordering::SeqCst);
                 break work;
             }
-
             std::thread::sleep(Duration::from_millis(100));
         };
 
         debug!("Mining block at height {}", work.header.height);
 
-        // Mine in chunks to allow checking for work updates
         let chunk_size: u64 = 100_000;
         let mut start_nonce: u64 = 0;
 
         loop {
-            // Check for shutdown or new work
             if state.shutdown.load(Ordering::Relaxed) {
                 return;
             }
-
             if state.work_updated.load(Ordering::Relaxed) {
-                debug!("Work updated, restarting mining");
+                debug!("Work updated, restarting");
                 break;
             }
 
@@ -319,27 +327,22 @@ fn mining_loop(
 
             match miner.mine_range(&work.header, start_nonce, end_nonce) {
                 Ok(MiningResult::Found { nonce, hash }) => {
-                    info!("🎉 Found valid nonce: {} for height {}", nonce, work.header.height);
+                    info!("Found valid nonce: {} for height {}", nonce, work.header.height);
 
-                    // Send solution
                     let solution = SolutionFound {
                         work_id: work.work_id.clone(),
                         nonce,
                         pow_hash: hash,
+                        height: work.header.height,
                     };
 
                     if let Err(e) = solution_tx.blocking_send(solution) {
                         error!("Failed to send solution: {}", e);
                     }
-
-                    // Wait for new work
                     break;
                 }
                 Ok(MiningResult::Exhausted) => {
-                    // Continue to next range
                     start_nonce = end_nonce;
-
-                    // Wrap around if we've exhausted the nonce space
                     if start_nonce == u64::MAX {
                         debug!("Nonce space exhausted, waiting for new work");
                         break;
@@ -356,56 +359,62 @@ fn mining_loop(
                 }
             }
 
-            // Update stats
             let miner_stats = miner.stats();
             stats.add_hashes(miner_stats.hashes);
         }
     }
 }
 
-/// Handle a found solution
+// ── Solution submission ───────────────────────────────────────────────────────
+
+/// Submit a found solution to the node and report the outcome.
 async fn handle_solution(
     rpc: &RpcClient,
     stats: &MiningStats,
     solution: SolutionFound,
+    event_tx: &mpsc::Sender<MinerEvent>,
 ) {
+    let height = solution.height;
+    let nonce = solution.nonce;
+
+    // Notify the display loop that we found a nonce (before submitting).
+    let _ = event_tx
+        .send(MinerEvent::BlockFound { height, nonce })
+        .await;
+
     let work_solution = WorkSolution {
         work_id: solution.work_id,
-        nonce: solution.nonce,
+        nonce,
         pow_hash: format!("0x{}", hex::encode(solution.pow_hash)),
     };
 
     match rpc.submit_work(&work_solution).await {
         Ok(true) => {
-            info!("✓ Block accepted by node!");
+            info!("Block {} accepted by node", height);
             stats.record_block_found();
+            let _ = event_tx
+                .send(MinerEvent::BlockAccepted { height })
+                .await;
         }
         Ok(false) => {
-            warn!("✗ Block rejected by node (stale or invalid)");
+            warn!("Block {} rejected by node (stale or invalid)", height);
             stats.record_block_rejected();
+            let _ = event_tx
+                .send(MinerEvent::BlockRejected { height })
+                .await;
         }
         Err(e) => {
-            error!("Failed to submit solution: {}", e);
+            error!("Failed to submit solution for height {}: {}", height, e);
             stats.record_block_rejected();
+            let _ = event_tx
+                .send(MinerEvent::BlockRejected { height })
+                .await;
         }
     }
 }
 
-/// Display mining statistics periodically
-async fn stats_display_loop(
-    stats: Arc<MiningStats>,
-    state: Arc<MinerState>,
-    interval: Duration,
-) {
-    while !state.shutdown.load(Ordering::Relaxed) {
-        tokio::time::sleep(interval).await;
+// ── CPU count helper ──────────────────────────────────────────────────────────
 
-        let snapshot = stats.snapshot();
-        info!("{}", snapshot);
-    }
-}
-
-/// Get the number of CPU cores
 mod num_cpus {
     pub fn get() -> usize {
         std::thread::available_parallelism()
@@ -413,3 +422,4 @@ mod num_cpus {
             .unwrap_or(1)
     }
 }
+

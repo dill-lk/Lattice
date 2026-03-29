@@ -1,255 +1,268 @@
-# Lattice Blockchain - One-Click Installer for Windows
-# Downloads pre-built binaries from GitHub Releases
+# Lattice Blockchain — One-Click Installer for Windows (PowerShell)
+# Source: https://github.com/dill-lk/Lattice/releases
+#
+# Usage:
+#   irm https://raw.githubusercontent.com/dill-lk/Lattice/main/install.ps1 | iex
+#   .\install.ps1 [-InstallDir <path>] [-Uninstall]
+#
+# If you get an execution-policy error, run this first (once, as your user):
+#   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+[CmdletBinding()]
+param(
+    [string] $InstallDir = "$env:USERPROFILE\.local\bin",
+    [switch] $Uninstall
+)
 
 $ErrorActionPreference = "Stop"
 
-# Configuration
-$BIN_DIR = if ($env:LATTICE_BIN_DIR) { $env:LATTICE_BIN_DIR } else { "$env:USERPROFILE\.local\bin" }
-$GITHUB_REPO = "dill-lk/Lattice"
-$GITHUB_API  = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
-$ASSET_NAME  = "lattice-windows-amd64.zip"
+# Enforce TLS 1.2+ — required on older Windows 10 builds
+[Net.ServicePointManager]::SecurityProtocol =
+    [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
 
-# Helper functions
+# ── Configuration ─────────────────────────────────────────────────────────────
+if ($env:LATTICE_BIN_DIR) { $InstallDir = $env:LATTICE_BIN_DIR }
+
+$GithubRepo  = "dill-lk/Lattice"
+$GithubApi   = "https://api.github.com/repos/$GithubRepo/releases/latest"
+$AssetName   = "lattice-windows-amd64.zip"
+$ConfigDir   = "$env:USERPROFILE\.lattice\config"
+$DataDir     = "$env:USERPROFILE\.lattice\data"
+$Binaries    = @("lattice-node.exe", "lattice-cli.exe", "lattice-miner.exe")
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 function Print-Header {
-    Write-Host "`n╔══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "╔══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
     Write-Host "║                                                          ║" -ForegroundColor Cyan
     Write-Host "║          🚀 LATTICE BLOCKCHAIN INSTALLER 🚀             ║" -ForegroundColor Green
     Write-Host "║                                                          ║" -ForegroundColor Cyan
-    Write-Host "║     Quantum-Resistant Blockchain with Advanced Features ║" -ForegroundColor Cyan
+    Write-Host "║     Quantum-Resistant Blockchain · GitHub Releases      ║" -ForegroundColor Cyan
     Write-Host "║                                                          ║" -ForegroundColor Cyan
-    Write-Host "╚══════════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+    Write-Host "╚══════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host ""
 }
 
-function Print-Step {
-    param([string]$Message)
-    Write-Host "==> " -ForegroundColor Blue -NoNewline
-    Write-Host $Message -ForegroundColor Green
+function Write-Step    { param([string]$M) Write-Host "==> " -ForegroundColor Blue -NoNewline; Write-Host $M -ForegroundColor Green }
+function Write-Info    { param([string]$M) Write-Host "i  " -ForegroundColor Cyan   -NoNewline; Write-Host $M }
+function Write-Ok      { param([string]$M) Write-Host "ok " -ForegroundColor Green  -NoNewline; Write-Host $M }
+function Write-Warn    { param([string]$M) Write-Host "!  " -ForegroundColor Yellow -NoNewline; Write-Host $M }
+function Write-Err     { param([string]$M) Write-Host "x  " -ForegroundColor Red    -NoNewline; Write-Host $M }
+
+# ── Uninstall ─────────────────────────────────────────────────────────────────
+function Invoke-Uninstall {
+    Write-Step "Removing Lattice binaries from $InstallDir..."
+    $removed = 0
+    foreach ($bin in $Binaries) {
+        $path = Join-Path $InstallDir $bin
+        if (Test-Path $path) {
+            Remove-Item $path -Force
+            Write-Ok "Removed $bin"
+            $removed++
+        }
+    }
+    if ($removed -eq 0) {
+        Write-Warn "No Lattice binaries found in $InstallDir"
+    } else {
+        Write-Ok "Uninstall complete ($removed binaries removed)"
+    }
+    Write-Info "Config and data in $env:USERPROFILE\.lattice were left intact."
+    exit 0
 }
 
-function Print-Info {
-    param([string]$Message)
-    Write-Host "i  " -ForegroundColor Cyan -NoNewline
-    Write-Host $Message
-}
+if ($Uninstall) { Invoke-Uninstall }
 
-function Print-Success {
-    param([string]$Message)
-    Write-Host "v  " -ForegroundColor Green -NoNewline
-    Write-Host $Message
-}
-
-function Print-Warning {
-    param([string]$Message)
-    Write-Host "!  " -ForegroundColor Yellow -NoNewline
-    Write-Host $Message
-}
-
-function Print-Error {
-    param([string]$Message)
-    Write-Host "x  " -ForegroundColor Red -NoNewline
-    Write-Host $Message
-}
-
-# Fetch the latest release and return download URL + tag
+# ── Fetch latest release ───────────────────────────────────────────────────────
 function Get-LatestRelease {
-    Print-Step "Fetching latest release from GitHub..."
+    Write-Step "Fetching latest release from GitHub..."
 
-    $release = Invoke-RestMethod -Uri $GITHUB_API -UseBasicParsing
+    $release = Invoke-RestMethod -Uri $GithubApi -UseBasicParsing
 
     $script:ReleaseTag = $release.tag_name
+    if (-not $script:ReleaseTag) {
+        Write-Err "Could not get release info. Check your internet connection."
+        Write-Info "Releases: https://github.com/$GithubRepo/releases"
+        exit 1
+    }
 
-    $asset = $release.assets | Where-Object { $_.name -eq $ASSET_NAME } | Select-Object -First 1
-
+    $asset = $release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
     if (-not $asset) {
-        Print-Error "No pre-built binary found for $ASSET_NAME in release $script:ReleaseTag."
-        Print-Info "See https://github.com/$GITHUB_REPO/releases for available assets."
+        Write-Err "No asset named '$AssetName' found in release $script:ReleaseTag."
+        Write-Info "See: https://github.com/$GithubRepo/releases"
         exit 1
     }
 
     $script:DownloadUrl = $asset.browser_download_url
-
-    Print-Success "Latest release: $script:ReleaseTag"
+    Write-Ok "Latest release: $script:ReleaseTag"
 }
 
-# Download the zip and install binaries
+# ── Download and install ───────────────────────────────────────────────────────
 function Install-Binaries {
-    Print-Step "Downloading $ASSET_NAME..."
+    Write-Step "Downloading $AssetName..."
 
-    $tmpDir  = [System.IO.Path]::GetTempPath() + [System.Guid]::NewGuid().ToString()
+    $tmpDir  = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
     New-Item -ItemType Directory -Path $tmpDir | Out-Null
-
-    $archive = Join-Path $tmpDir $ASSET_NAME
+    $archive = Join-Path $tmpDir $AssetName
 
     $ProgressPreference = 'SilentlyContinue'
     Invoke-WebRequest -Uri $script:DownloadUrl -OutFile $archive -UseBasicParsing
     $ProgressPreference = 'Continue'
+    Write-Ok "Download complete"
 
-    Print-Success "Download complete"
-    Print-Step "Installing binaries to $BIN_DIR..."
-
-    if (-not (Test-Path $BIN_DIR)) {
-        New-Item -ItemType Directory -Path $BIN_DIR -Force | Out-Null
+    Write-Step "Installing binaries to $InstallDir..."
+    if (-not (Test-Path $InstallDir)) {
+        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
 
     Expand-Archive -Path $archive -DestinationPath $tmpDir -Force
 
     $installed = 0
-    foreach ($bin in @("lattice-node.exe", "lattice-cli.exe", "lattice-miner.exe")) {
-        $src = Join-Path $tmpDir $bin
-        if (Test-Path $src) {
-            Copy-Item $src (Join-Path $BIN_DIR $bin) -Force
+    foreach ($bin in $Binaries) {
+        # Support both flat archives and archives with a subdirectory
+        $src = Get-ChildItem -Path $tmpDir -Filter $bin -Recurse -ErrorAction SilentlyContinue |
+               Select-Object -First 1
+        if ($src) {
+            Copy-Item $src.FullName (Join-Path $InstallDir $bin) -Force
+            Write-Ok "Installed $bin"
             $installed++
+        } else {
+            Write-Warn "$bin not found in archive (skipped)"
         }
     }
 
     Remove-Item -Recurse -Force $tmpDir
 
     if ($installed -eq 0) {
-        Print-Error "No binaries were found in the archive. The release may be incomplete."
+        Write-Err "No binaries were installed. The release asset may be empty."
         exit 1
     }
-
-    Print-Success "Installed $installed binaries to $BIN_DIR"
+    Write-Ok "$installed binaries installed to $InstallDir"
 }
 
-# Add BIN_DIR to the user PATH if not already present
-function Setup-Path {
-    Print-Step "Setting up PATH..."
+# ── Add InstallDir to PATH ────────────────────────────────────────────────────
+function Set-UserPath {
+    Write-Step "Setting up PATH..."
 
-    $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-
-    if ($currentPath -notlike "*$BIN_DIR*") {
-        [Environment]::SetEnvironmentVariable("Path", "$currentPath;$BIN_DIR", "User")
-        $env:PATH = "$env:PATH;$BIN_DIR"
-        Print-Success "Added $BIN_DIR to PATH"
-        Print-Warning "Restart your terminal for the PATH change to take effect"
-    } else {
-        Print-Success "PATH already configured"
+    $current = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($current -like "*$InstallDir*") {
+        Write-Ok "PATH already includes $InstallDir"
+        return
     }
+
+    [Environment]::SetEnvironmentVariable("Path", "$current;$InstallDir", "User")
+    $env:PATH = "$env:PATH;$InstallDir"
+    Write-Ok "Added $InstallDir to your user PATH"
+    Write-Warn "Restart your terminal (or open a new PowerShell window) for the PATH change to take effect"
 }
 
-# Create default configuration
-function Create-Config {
-    Print-Step "Creating default configuration..."
+# ── Create default configuration ──────────────────────────────────────────────
+function New-DefaultConfig {
+    Write-Step "Creating default configuration..."
 
-    $configDir = "$env:USERPROFILE\.lattice\config"
-    if (-not (Test-Path $configDir)) {
-        New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    foreach ($dir in @($ConfigDir, $DataDir)) {
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     }
 
-    $configContent = @"
+    $cfg = Join-Path $ConfigDir "node.toml"
+    if (Test-Path $cfg) {
+        Write-Info "Config already exists at $cfg — skipping"
+        return
+    }
+
+    @"
 # Lattice Node Configuration
+# Generated by the installer — edit as needed.
 
 [network]
-# P2P listen address
-listen_addr = "/ip4/0.0.0.0/tcp/30333"
-# Bootstrap nodes (empty for standalone)
+listen_addr     = "/ip4/0.0.0.0/tcp/30303"
 bootstrap_nodes = []
-# Maximum number of peers
-max_peers = 50
+max_peers       = 50
 
 [consensus]
-# Mining threads (0 = auto-detect)
 mining_threads = 0
-# Mining difficulty (auto-adjust)
-difficulty = 1000000
+difficulty     = 1000000
 
 [rpc]
-# RPC listen address
 listen_addr = "127.0.0.1:8545"
-# Enable RPC server
-enabled = true
+enabled     = true
 
 [storage]
-# Database path
-db_path = "$env:USERPROFILE\.lattice\data"
-# Cache size in MB
+db_path    = "$DataDir"
 cache_size = 256
-"@
+"@ | Out-File -FilePath $cfg -Encoding utf8
 
-    $configContent | Out-File -FilePath "$configDir\node.toml" -Encoding utf8
-
-    Print-Success "Configuration created at $configDir\node.toml"
+    Write-Ok "Config written to $cfg"
 }
 
-# Create desktop shortcuts
-function Create-Shortcuts {
-    Print-Step "Creating desktop shortcuts..."
+# ── Desktop shortcuts (best-effort) ───────────────────────────────────────────
+function New-Shortcuts {
+    Write-Step "Creating desktop shortcuts..."
+    try {
+        $desktop = [Environment]::GetFolderPath("Desktop")
+        if (-not $desktop -or -not (Test-Path $desktop)) {
+            Write-Warn "Desktop folder not found — skipping shortcuts"
+            return
+        }
 
-    $desktopPath = [Environment]::GetFolderPath("Desktop")
-    $WshShell = New-Object -ComObject WScript.Shell
+        $shell = New-Object -ComObject WScript.Shell
 
-    # Node shortcut
-    $shortcut = $WshShell.CreateShortcut("$desktopPath\Lattice Node.lnk")
-    $shortcut.TargetPath = "$BIN_DIR\lattice-node.exe"
-    $shortcut.WorkingDirectory = "$env:USERPROFILE\.lattice"
-    $shortcut.Description = "Lattice Blockchain Node"
-    $shortcut.Save()
+        $sc = $shell.CreateShortcut("$desktop\Lattice Node.lnk")
+        $sc.TargetPath       = Join-Path $InstallDir "lattice-node.exe"
+        $sc.WorkingDirectory = "$env:USERPROFILE\.lattice"
+        $sc.Description      = "Lattice Blockchain Node"
+        $sc.Save()
 
-    # CLI shortcut
-    $shortcut = $WshShell.CreateShortcut("$desktopPath\Lattice CLI.lnk")
-    $shortcut.TargetPath = "powershell.exe"
-    $shortcut.Arguments = "-NoExit -Command `"cd '$env:USERPROFILE\.lattice'; Write-Host 'Lattice CLI Ready' -ForegroundColor Green`""
-    $shortcut.WorkingDirectory = "$env:USERPROFILE\.lattice"
-    $shortcut.Description = "Lattice Command Line"
-    $shortcut.Save()
+        $sc = $shell.CreateShortcut("$desktop\Lattice CLI.lnk")
+        $sc.TargetPath       = "powershell.exe"
+        $sc.Arguments        = "-NoExit -Command `"Set-Location '$env:USERPROFILE\.lattice'; Write-Host 'Lattice CLI ready — type lattice-cli --help' -ForegroundColor Green`""
+        $sc.WorkingDirectory = "$env:USERPROFILE\.lattice"
+        $sc.Description      = "Lattice Command-Line Interface"
+        $sc.Save()
 
-    Print-Success "Shortcuts created on Desktop"
+        Write-Ok "Shortcuts created on Desktop"
+    } catch {
+        Write-Warn "Could not create desktop shortcuts: $_"
+    }
 }
 
-# Print completion message
+# ── Completion banner ──────────────────────────────────────────────────────────
 function Print-Completion {
     Write-Host ""
     Write-Host "╔══════════════════════════════════════════════════════════╗" -ForegroundColor Green
-    Write-Host "║                                                          ║" -ForegroundColor Green
-    Write-Host "║        ✅ LATTICE INSTALLATION COMPLETE! ✅             ║" -ForegroundColor Green
-    Write-Host "║                                                          ║" -ForegroundColor Green
+    Write-Host "║        ✅  LATTICE INSTALLATION COMPLETE  ✅            ║" -ForegroundColor Green
     Write-Host "╚══════════════════════════════════════════════════════════╝" -ForegroundColor Green
     Write-Host ""
-    Write-Host "📍 Installation Details:" -ForegroundColor Cyan
-    Write-Host "   • Version:  $script:ReleaseTag" -ForegroundColor White
-    Write-Host "   • Binaries: $BIN_DIR" -ForegroundColor White
-    Write-Host "   • Config:   $env:USERPROFILE\.lattice\config" -ForegroundColor White
-    Write-Host "   • Data:     $env:USERPROFILE\.lattice\data" -ForegroundColor White
+    Write-Host "📍 Installation summary:" -ForegroundColor Cyan
+    Write-Host "   Version:  $script:ReleaseTag"
+    Write-Host "   Binaries: $InstallDir"
+    Write-Host "   Config:   $ConfigDir"
+    Write-Host "   Data:     $DataDir"
     Write-Host ""
-    Write-Host "🚀 Quick Start:" -ForegroundColor Cyan
+    Write-Host "🚀 Quick start:" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "   1. Create a wallet:" -ForegroundColor Yellow
     Write-Host "      lattice-cli wallet create" -ForegroundColor Blue
     Write-Host ""
-    Write-Host "   2. Start a node:" -ForegroundColor Yellow
-    Write-Host "      lattice-node --config $env:USERPROFILE\.lattice\config\node.toml" -ForegroundColor Blue
+    Write-Host "   2. Start the node:" -ForegroundColor Yellow
+    Write-Host "      lattice-node" -ForegroundColor Blue
     Write-Host ""
     Write-Host "   3. Check node status:" -ForegroundColor Yellow
     Write-Host "      lattice-cli node status" -ForegroundColor Blue
     Write-Host ""
-    Write-Host "   4. Start mining:" -ForegroundColor Yellow
-    Write-Host "      lattice-miner --threads 4" -ForegroundColor Blue
+    Write-Host "   4. Start mining (replace with your address):" -ForegroundColor Yellow
+    Write-Host "      lattice-node --mine --coinbase <your-address>" -ForegroundColor Blue
     Write-Host ""
-    Write-Host "📚 Documentation:" -ForegroundColor Cyan
-    Write-Host "   • GitHub: https://github.com/$GITHUB_REPO" -ForegroundColor White
-    Write-Host ""
-    Write-Host "💡 Need help?" -ForegroundColor Cyan
-    Write-Host "   • GitHub: https://github.com/$GITHUB_REPO" -ForegroundColor White
+    Write-Host "📦 Releases & source:" -ForegroundColor Cyan
+    Write-Host "   https://github.com/$GithubRepo/releases" -ForegroundColor Blue
     Write-Host ""
 }
 
-# Main installation flow
-function Main {
-    Print-Header
-    Get-LatestRelease
-    Install-Binaries
-    Setup-Path
-    Create-Config
-    Create-Shortcuts
-    Print-Completion
-}
-
-try {
-    Main
-} catch {
-    Print-Error "Installation failed: $_"
-    Write-Host $_.ScriptStackTrace
-    exit 1
-}
+# ── Main ──────────────────────────────────────────────────────────────────────
+Print-Header
+Get-LatestRelease
+Install-Binaries
+Set-UserPath
+New-DefaultConfig
+New-Shortcuts
+Print-Completion
 

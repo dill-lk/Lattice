@@ -13,7 +13,14 @@ Lattice (LAT) is a quantum-resistant cryptocurrency with a carefully designed to
 | **Decimals** | 8 | 1 LAT = 100,000,000 Latt |
 | **Smallest Unit** | Latt | Like Satoshi for Bitcoin |
 | **Block Reward** | 10 LAT | Mining reward per block |
-| **Target Block Time** | 15 seconds | ~5,760 blocks per day |
+
+## Block Time (Per Network)
+
+| Network | Block Time | Blocks/Day | Use Case |
+|---------|------------|------------|----------|
+| **Devnet** | ~2 seconds | ~43,200 | Instant feedback for development |
+| **Testnet** | ~5 seconds | ~17,280 | Testing with real-world feel |
+| **Mainnet** | ~15 seconds | ~5,760 | Production, full security |
 
 ## Developer Genesis Fee (5% of Total Supply)
 

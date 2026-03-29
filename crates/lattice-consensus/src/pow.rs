@@ -46,7 +46,7 @@ impl Default for PoWConfig {
 }
 
 impl PoWConfig {
-    /// Create a light config for testing (much faster)
+    /// Create a light config for testing (much faster, ~100-500 H/s)
     pub fn light() -> Self {
         Self {
             memory_cost_kib: 1024, // 1 MiB
@@ -54,6 +54,31 @@ impl PoWConfig {
             parallelism: 1,
             output_len: 32,
         }
+    }
+    
+    /// Create devnet config (very fast, instant blocks)
+    pub fn devnet() -> Self {
+        Self {
+            memory_cost_kib: 512,  // 512 KiB - very fast
+            time_cost: 1,
+            parallelism: 1,
+            output_len: 32,
+        }
+    }
+    
+    /// Create testnet config (moderate speed)
+    pub fn testnet() -> Self {
+        Self {
+            memory_cost_kib: 4096, // 4 MiB
+            time_cost: 1,
+            parallelism: 2,
+            output_len: 32,
+        }
+    }
+    
+    /// Create mainnet config (full security, memory-hard)
+    pub fn mainnet() -> Self {
+        Self::default()
     }
 
     /// Create the Argon2 hasher from this config

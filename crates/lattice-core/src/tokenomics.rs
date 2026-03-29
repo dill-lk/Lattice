@@ -32,11 +32,21 @@ pub const TOTAL_SUPPLY: Amount = 50_000_000 * LATT_PER_LAT;
 /// Block reward: 10 LAT per block (in base units)
 pub const BLOCK_REWARD: Amount = 10 * LATT_PER_LAT;
 
-/// Target block time in milliseconds (15 seconds)
-pub const TARGET_BLOCK_TIME_MS: u64 = 15_000;
+// ============================================================================
+// Block Time Configuration (per network)
+// ============================================================================
 
-/// Blocks per day (approximate: 86400 / 15 = 5760)
-pub const BLOCKS_PER_DAY: u64 = 5760;
+/// Target block time for mainnet (15 seconds)
+pub const MAINNET_BLOCK_TIME_MS: u64 = 15_000;
+
+/// Target block time for testnet (5 seconds - faster feedback)
+pub const TESTNET_BLOCK_TIME_MS: u64 = 5_000;
+
+/// Target block time for devnet (2 seconds - instant feedback)
+pub const DEVNET_BLOCK_TIME_MS: u64 = 2_000;
+
+/// Blocks per day on mainnet (86400 / 15 = 5760)
+pub const BLOCKS_PER_DAY: u64 = 86_400_000 / MAINNET_BLOCK_TIME_MS;
 
 /// Blocks per month (approximate: 30 days)
 pub const BLOCKS_PER_MONTH: u64 = BLOCKS_PER_DAY * 30;

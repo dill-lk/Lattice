@@ -48,7 +48,11 @@ struct Args {
     #[arg(long, default_value = "10")]
     stats_interval: u64,
 
-    /// Use light PoW config (for testing only - faster hashing)
+    /// Network to mine on (determines PoW difficulty)
+    #[arg(long, default_value = "mainnet")]
+    network: String,
+
+    /// Use light PoW config (overrides --network setting)
     #[arg(long)]
     light: bool,
 }
@@ -114,6 +118,7 @@ async fn main() -> Result<()> {
         num_threads,
         &args.coinbase,
         &args.rpc,
+        &args.network,
     );
 
     // Display event channel — all worker tasks send events here; the display
@@ -130,12 +135,25 @@ async fn main() -> Result<()> {
     // Create solution channel
     let (solution_tx, mut solution_rx) = mpsc::channel::<SolutionFound>(32);
 
-    // PoW configuration
+    // PoW configuration based on network
     let pow_config = if args.light {
         warn!("Using light PoW config (testing only!)");
         PoWConfig::light()
     } else {
-        PoWConfig::default()
+        match args.network.to_lowercase().as_str() {
+            "devnet" | "dev" => {
+                info!("Using devnet PoW config (fast blocks, ~2 sec)");
+                PoWConfig::devnet()
+            }
+            "testnet" | "test" => {
+                info!("Using testnet PoW config (moderate speed, ~5 sec)");
+                PoWConfig::testnet()
+            }
+            _ => {
+                info!("Using mainnet PoW config (full security, ~15 sec blocks)");
+                PoWConfig::mainnet()
+            }
+        }
     };
 
     // ── Spawn tasks ──────────────────────────────────────────────────────────

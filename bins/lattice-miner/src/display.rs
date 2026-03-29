@@ -50,11 +50,12 @@ pub enum MinerEvent {
 // ── One-shot prints ───────────────────────────────────────────────────────────
 
 /// Print the startup banner directly to stdout (no tracing prefix).
-pub fn print_banner(version: &str, threads: usize, coinbase: &str, rpc: &str) {
+pub fn print_banner(version: &str, threads: usize, coinbase: &str, rpc: &str, network: &str) {
     let bar = "═".repeat(BOX_INNER);
     // Truncate long strings so they fit in the box without wrapping.
     let coinbase_disp = truncate(coinbase, BOX_INNER - 12);
     let rpc_disp = truncate(rpc, BOX_INNER - 12);
+    let network_disp = network.to_uppercase();
 
     let lines = [
         format!("╔{}╗", bar),
@@ -64,6 +65,11 @@ pub fn print_banner(version: &str, threads: usize, coinbase: &str, rpc: &str) {
             inner = BOX_INNER
         ),
         format!("╠{}╣", bar),
+        format!(
+            "║  {:<width$}║",
+            format!("Network : {}", network_disp),
+            width = BOX_INNER - 2
+        ),
         format!(
             "║  {:<width$}║",
             format!("Threads : {}", threads),

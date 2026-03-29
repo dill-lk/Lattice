@@ -210,10 +210,9 @@ impl VestingSchedule {
             self.total_amount
         } else {
             // Linear vesting: (elapsed / duration) * total
-            // Use u128 to avoid overflow
-            let vested = (self.total_amount as u128 * elapsed as u128) 
+            let vested = (self.total_amount * elapsed as u128) 
                 / self.duration_blocks as u128;
-            vested as Amount
+            vested
         }
     }
     
@@ -299,20 +298,20 @@ pub fn circulating_supply(block_height: BlockHeight) -> Amount {
     let genesis_circulation = FOUNDER_IMMEDIATE_AMOUNT;
     
     // Block rewards mined (10 LAT per block)
-    let mined_rewards = (block_height as u128) * (BLOCK_REWARD as u128);
+    let mined_rewards = (block_height as u128) * BLOCK_REWARD;
     
     // Note: This doesn't account for vesting releases which would add to circulation
     // In practice, you'd track this via state
     
-    genesis_circulation + mined_rewards as Amount
+    genesis_circulation + mined_rewards
 }
 
 /// Calculate remaining supply to be mined
 pub fn remaining_minable_supply(block_height: BlockHeight) -> Amount {
-    let mined = (block_height as u128) * (BLOCK_REWARD as u128);
+    let mined = (block_height as u128) * BLOCK_REWARD;
     let max_minable = TOTAL_SUPPLY - TOTAL_GENESIS_ALLOCATION;
     
-    max_minable.saturating_sub(mined as Amount)
+    max_minable.saturating_sub(mined)
 }
 
 /// Estimate blocks until max supply is reached

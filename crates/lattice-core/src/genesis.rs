@@ -4,11 +4,11 @@
 //! including the founder's genesis allocation (Developer Genesis Fee).
 
 use crate::tokenomics::{
-    self, GenesisAllocation, VestingSchedule, FOUNDER_IMMEDIATE_AMOUNT,
+    self, VestingSchedule, FOUNDER_IMMEDIATE_AMOUNT,
     FOUNDER_VESTING_AMOUNT, FOUNDER_WALLET_ADDRESS, TOTAL_GENESIS_ALLOCATION,
     TOTAL_SUPPLY, TOKEN_SYMBOL,
 };
-use crate::{Account, Address, Amount, Block, BlockHeader, Hash, Network, State};
+use crate::{Account, Address, Amount, Block, BlockHeader, Network, State};
 use sha3::{Digest, Sha3_256};
 use serde::{Deserialize, Serialize};
 

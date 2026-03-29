@@ -224,12 +224,13 @@ impl VestingSchedule {
     pub fn release(&mut self, amount: Amount) -> Result<(), VestingError> {
         if amount > self.claimable_amount(0) {
             return Err(VestingError::InsufficientVestedAmount);
+    pub fn release(&mut self, amount: Amount, current_block: BlockHeight) -> Result<(), VestingError> {
+        if amount > self.claimable_amount(current_block) {
+            return Err(VestingError::InsufficientVestedAmount);
         }
         self.released_amount += amount;
         Ok(())
     }
-    
-    /// Check if vesting is complete
     pub fn is_complete(&self) -> bool {
         self.released_amount >= self.total_amount
     }

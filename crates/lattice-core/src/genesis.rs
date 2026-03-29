@@ -62,7 +62,7 @@ impl GenesisConfig {
             network: Network::Mainnet,
             // Genesis timestamp: 2025-01-01 00:00:00 UTC
             timestamp: 1735689600000,
-            difficulty: 1_000_000,
+            difficulty: 10,
             extra_data: "Lattice Mainnet Genesis - Quantum Resistant Blockchain".to_string(),
             allocations: vec![
                 GenesisAccountAllocation {

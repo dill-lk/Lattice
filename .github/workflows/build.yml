@@ -16,8 +16,8 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
-    # Skip check/test for tag events (already passed on main)
-    if: github.event_name != 'create'
+    # Skip check/test for tag pushes (already passed on main/develop)
+    if: github.ref_type != 'tag'
     steps:
       - uses: actions/checkout@v4
       
@@ -53,8 +53,8 @@ jobs:
   test:
     name: Test Suite
     runs-on: ubuntu-latest
-    # Skip check/test for tag events (already passed on main)
-    if: github.event_name != 'create'
+    # Skip check/test for tag pushes (already passed on main/develop)
+    if: github.ref_type != 'tag'
     steps:
       - uses: actions/checkout@v4
       

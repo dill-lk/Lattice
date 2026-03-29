@@ -4,10 +4,12 @@ use crate::error::{Result, RpcError};
 use crate::types::{
     BlockNumber, BlockTag, CallRequest, RpcBlock, RpcTransaction, TransactionReceipt,
 };
-use lattice_core::{Address, Amount, Block, BlockHeight, Hash, Transaction};
+use lattice_consensus::{verify_pow, PoWConfig};
+use lattice_core::{Address, Amount, Block, BlockHeader, BlockHeight, Hash, Transaction};
 use parking_lot::RwLock;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -25,6 +27,8 @@ pub struct ChainState {
     pub height: BlockHeight,
     /// Pending transactions (mempool)
     pub pending_txs: Vec<Transaction>,
+    /// Pending mining work templates indexed by work_id
+    pub pending_work: HashMap<String, Block>,
 }
 
 impl Default for ChainState {
@@ -51,6 +55,7 @@ impl ChainState {
             balances: HashMap::new(),
             height: 0,
             pending_txs: Vec::new(),
+            pending_work: HashMap::new(),
         }
     }
 }
@@ -58,6 +63,8 @@ impl ChainState {
 /// RPC handlers for Lattice blockchain
 pub struct RpcHandlers {
     state: Arc<RwLock<ChainState>>,
+    /// Monotonic counter for generating unique work IDs
+    work_counter: AtomicU64,
 }
 
 impl Default for RpcHandlers {
@@ -71,12 +78,16 @@ impl RpcHandlers {
     pub fn new() -> Self {
         Self {
             state: Arc::new(RwLock::new(ChainState::new())),
+            work_counter: AtomicU64::new(0),
         }
     }
 
     /// Create RPC handlers with shared state
     pub fn with_state(state: Arc<RwLock<ChainState>>) -> Self {
-        Self { state }
+        Self {
+            state,
+            work_counter: AtomicU64::new(0),
+        }
     }
 
     /// Get shared state
@@ -98,6 +109,8 @@ impl RpcHandlers {
             "lat_getTransactionReceipt" => self.lat_get_transaction_receipt(params),
             "lat_call" => self.lat_call(params),
             "lat_estimateGas" => self.lat_estimate_gas(params),
+            "lat_getWork" => self.lat_get_work(params),
+            "lat_submitWork" => self.lat_submit_work(params),
             _ => {
                 warn!(method = %method, "Unknown RPC method");
                 Err(RpcError::method_not_found())
@@ -309,6 +322,179 @@ impl RpcHandlers {
         Ok(json!("0x"))
     }
 
+    /// lat_getWork - Get a mining work template
+    ///
+    /// Params: [coinbase_address]
+    /// Returns: { workId, txCount, header: { version, height, prevHash, txRoot,
+    ///            stateRoot, timestamp, difficulty, coinbase } }
+    pub fn lat_get_work(&self, params: Value) -> Result<Value> {
+        let params: Vec<Value> = serde_json::from_value(params)
+            .map_err(|_| RpcError::invalid_params("Expected array of parameters"))?;
+
+        let coinbase_str = params
+            .first()
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RpcError::invalid_params("Missing coinbase address"))?;
+
+        let coinbase = Address::from_base58(coinbase_str)
+            .map_err(|_| RpcError::invalid_params("Invalid coinbase address"))?;
+
+        let mut state = self.state.write();
+
+        let next_height = state.height + 1;
+
+        // Previous block hash: hash of the current best block
+        let prev_hash = state
+            .blocks_by_height
+            .get(&state.height)
+            .map(|b| b.hash())
+            .unwrap_or([0u8; 32]);
+
+        // Collect pending transactions
+        let txs = state.pending_txs.clone();
+        let tx_count = txs.len();
+
+        // Merkle root of pending transactions
+        let tx_root = Block::calculate_tx_root(&txs);
+
+        // Inherit difficulty from the latest block (or minimum of 1)
+        let difficulty = state
+            .blocks_by_height
+            .get(&state.height)
+            .map(|b| b.header.difficulty)
+            .unwrap_or(1);
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let header = BlockHeader {
+            version: 1,
+            height: next_height,
+            prev_hash,
+            tx_root,
+            state_root: [0u8; 32],
+            timestamp,
+            difficulty,
+            nonce: 0,
+            coinbase,
+        };
+
+        // Use a monotonic counter to generate a unique work_id, ensuring
+        // multiple rapid polls for the same height don't produce duplicate entries.
+        let seq = self.work_counter.fetch_add(1, Ordering::Relaxed);
+        let work_id = format!("{}-{}", next_height, seq);
+
+        // Store the block template keyed by work_id
+        let template = Block::new(header.clone(), txs);
+        // Evict stale templates for previous heights to bound memory usage
+        state.pending_work.retain(|_, b| b.header.height >= next_height);
+        state.pending_work.insert(work_id.clone(), template);
+
+        Ok(json!({
+            "workId": work_id,
+            "txCount": tx_count,
+            "header": {
+                "version": header.version,
+                "height": format!("0x{:x}", header.height),
+                "prevHash": format!("0x{}", hex::encode(header.prev_hash)),
+                "txRoot": format!("0x{}", hex::encode(header.tx_root)),
+                "stateRoot": format!("0x{}", hex::encode(header.state_root)),
+                "timestamp": format!("0x{:x}", header.timestamp),
+                "difficulty": format!("0x{:x}", header.difficulty),
+                "coinbase": header.coinbase.to_base58(),
+            }
+        }))
+    }
+
+    /// lat_submitWork - Submit a found mining solution
+    ///
+    /// Params: [{ workId, nonce, powHash }]
+    /// Returns: true if the solution was accepted, false otherwise
+    pub fn lat_submit_work(&self, params: Value) -> Result<Value> {
+        let params: Vec<Value> = serde_json::from_value(params)
+            .map_err(|_| RpcError::invalid_params("Expected array of parameters"))?;
+
+        let submission = params
+            .first()
+            .ok_or_else(|| RpcError::invalid_params("Missing submission object"))?;
+
+        let work_id = submission
+            .get("workId")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RpcError::invalid_params("Missing workId"))?
+            .to_string();
+
+        let nonce_str = submission
+            .get("nonce")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RpcError::invalid_params("Missing nonce"))?;
+
+        let nonce = parse_hex_u64(nonce_str)
+            .map_err(|_| RpcError::invalid_params("Invalid nonce format"))?;
+
+        let mut state = self.state.write();
+
+        // Retrieve (and remove) the work template
+        let mut block = match state.pending_work.remove(&work_id) {
+            Some(b) => b,
+            None => {
+                debug!(work_id = %work_id, "submitWork: unknown or stale work_id");
+                return Ok(json!(false));
+            }
+        };
+
+        // Insert the found nonce and verify the PoW
+        block.header.nonce = nonce;
+        let valid = match verify_pow(&block.header, &PoWConfig::default()) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(work_id = %work_id, error = %e, "submitWork: PoW verification error");
+                return Ok(json!(false));
+            }
+        };
+
+        if !valid {
+            debug!(work_id = %work_id, nonce, "submitWork: nonce does not meet difficulty target");
+            return Ok(json!(false));
+        }
+
+        let block_hash = block.hash();
+        let block_height = block.header.height;
+
+        // Reject if a block was already accepted at this height (no reorganisation support)
+        if state.blocks_by_height.contains_key(&block_height) {
+            debug!(height = block_height, "submitWork: block already accepted at this height");
+            return Ok(json!(false));
+        }
+
+        // Move block transactions from pending to confirmed
+        let block_tx_hashes: std::collections::HashSet<Hash> =
+            block.transactions.iter().map(|tx| tx.hash()).collect();
+        state.pending_txs.retain(|tx| !block_tx_hashes.contains(&tx.hash()));
+
+        for tx in &block.transactions {
+            let tx_hash = tx.hash();
+            state
+                .transactions
+                .entry(tx_hash)
+                .and_modify(|(_, bh)| *bh = Some(block_hash))
+                .or_insert_with(|| (tx.clone(), Some(block_hash)));
+        }
+
+        // Add the new block to the chain
+        state.blocks_by_height.insert(block_height, block.clone());
+        state.blocks_by_hash.insert(block_hash, block);
+
+        if block_height > state.height {
+            state.height = block_height;
+        }
+
+        debug!(height = block_height, "submitWork: block accepted");
+        Ok(json!(true))
+    }
+
     /// lat_estimateGas - Estimate gas for a transaction
     pub fn lat_estimate_gas(&self, params: Value) -> Result<Value> {
         let params: Vec<Value> = serde_json::from_value(params)
@@ -396,6 +582,12 @@ impl RpcHandlers {
             block_number: block_number_str,
         }
     }
+}
+
+/// Parse a hex string (with or without 0x prefix) into a u64
+fn parse_hex_u64(s: &str) -> std::result::Result<u64, std::num::ParseIntError> {
+    let hex_str = s.strip_prefix("0x").unwrap_or(s);
+    u64::from_str_radix(hex_str, 16)
 }
 
 /// Parse a hex-encoded hash string

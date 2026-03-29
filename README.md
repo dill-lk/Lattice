@@ -42,13 +42,15 @@ Lattice is a **quantum-resistant blockchain** built for the future. While other 
 | **Genesis Allocation** | 5% (2.5M LAT with vesting) |
 | **Mining Allocation** | 95% (47.5M LAT) |
 
-### Block Times
+### Block Times & Difficulty
 
-| Network | Block Time | Use Case |
-|---------|------------|----------|
-| **Devnet** | ~2 seconds | Development & testing |
-| **Testnet** | ~5 seconds | Pre-production testing |
-| **Mainnet** | ~15 seconds | Production |
+| Network | Block Time | Initial Difficulty | PoW Memory |
+|---------|------------|-------------------|------------|
+| **Devnet** | ~2 seconds | 1 | 512 KB |
+| **Testnet** | ~5 seconds | 5 | 4 MB |
+| **Mainnet** | ~15 seconds | 10 | 64 MB |
+
+> 💡 Lower difficulty = faster block finding. Use devnet for development!
 
 ### Genesis Allocation
 
@@ -223,6 +225,23 @@ Lattice uses algorithms selected by NIST for post-quantum security:
 | RPC connection error | Make sure `lattice-node` is running |
 | Invalid coinbase address | Use address from `lattice-cli wallet address` |
 | Low hashrate | Increase `--threads`, close background apps |
+| Old chain data | Delete data directory and restart (see below) |
+
+### Reset Chain Data
+
+If you need to start fresh (e.g., after updating difficulty settings):
+
+**Windows:**
+```powershell
+Remove-Item -Recurse $env:LOCALAPPDATA\Lattice
+```
+
+**Linux/macOS:**
+```bash
+rm -rf ~/.local/share/lattice
+```
+
+### Node Commands
 
 ```bash
 # Check node status

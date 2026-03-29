@@ -1,234 +1,230 @@
-# ⛏️ Lattice - Mine Quantum-Resistant Cryptocurrency
+# ⛏️ Lattice — Quantum-Resistant Blockchain
 
-**Start earning LAT tokens today! CPU-friendly mining, no expensive GPUs needed.**
+**CPU-friendly mining · Post-quantum cryptography · Open source**
 
-Lattice is the world's first production-ready quantum-resistant blockchain. Mine with your regular computer and earn rewards while securing the future of cryptocurrency.
-
----
-
-## 💰 Why Mine Lattice?
-
-| Feature | Benefit |
-|---------|---------|
-| **🖥️ CPU-Friendly** | Mine with any computer - no expensive GPUs or ASICs needed |
-| **💎 Fair Distribution** | ASIC-resistant algorithm ensures fair mining for everyone |
-| **🔐 Future-Proof** | Quantum-resistant technology protects your earnings forever |
-| **⚡ Fast Blocks** | ~15 second block time = frequent rewards |
-| **💵 Predictable Rewards** | 10 LAT per block, ~57,600 LAT daily emission |
+Lattice is a quantum-resistant blockchain secured by CRYSTALS-Dilithium3 signatures and an Argon2-based memory-hard Proof-of-Work algorithm. Anyone with a regular CPU can participate.
 
 ---
 
-## 🚀 Quick Start - Start Mining in 60 Seconds
+## 🚀 Install in 60 Seconds
 
-### **Linux / macOS**
+Binaries are published on the [GitHub Releases](https://github.com/dill-lk/Lattice/releases) page.
+The installer downloads the latest release automatically.
+
+### Linux / macOS
+
 ```bash
-curl -sSfL https://latticechain.io/install.sh | bash
-./start-mining.sh
+curl -fsSL https://raw.githubusercontent.com/dill-lk/Lattice/main/install.sh | bash
 ```
 
-### **Windows (PowerShell)**
+> To choose a custom install directory: `bash install.sh --dir /usr/local/bin`
+> To uninstall: `bash install.sh --uninstall`
+
+### Windows (PowerShell)
+
 ```powershell
-irm https://latticechain.io/install.ps1 | iex
-.\start-mining.ps1
+# Run once if needed (allows local script execution):
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+irm https://raw.githubusercontent.com/dill-lk/Lattice/main/install.ps1 | iex
 ```
 
-**That's it!** 🎉 You're now mining LAT tokens! Rewards will automatically go to your wallet.
+> Custom directory: `.\install.ps1 -InstallDir "C:\Lattice"`
+> Uninstall: `.\install.ps1 -Uninstall`
+
+The installer places three binaries on your `PATH`:
+
+| Binary | Purpose |
+|--------|---------|
+| `lattice-node` | Full blockchain node + built-in miner |
+| `lattice-cli` | Wallet management & RPC queries |
+| `lattice-miner` | Standalone multi-threaded miner |
 
 ---
 
-## 💵 How Much Can I Earn?
+## ⚙️ Setup: Three Steps
 
-**Mining Rewards:** 10 LAT per block (every ~15 seconds)
+### 1 — Create a Wallet
 
-### Estimated Daily Earnings
+```bash
+lattice-cli wallet create
+# Saved to ./wallet.json by default
+# Note the address printed — you'll use it as your coinbase
+```
 
-| Your Hardware | Hashrate | Daily Earnings | Monthly Earnings |
-|---------------|----------|----------------|------------------|
-| 4-core CPU (Basic) | ~100 H/s | ~10 LAT | ~300 LAT |
-| 8-core CPU (Good) | ~500 H/s | ~50 LAT | ~1,500 LAT |
-| 16-core CPU (Great) | ~1000 H/s | ~100 LAT | ~3,000 LAT |
-| 32-core Server (Excellent) | ~2000 H/s | ~200 LAT | ~6,000 LAT |
+### 2 — Start the Node
 
-*Earnings depend on network difficulty and your CPU performance*
+```bash
+# Mainnet (default)
+lattice-node
+
+# With mining enabled right away (replace with your address)
+lattice-node --mine --mining-threads 4 --coinbase <your-address>
+```
+
+The node starts the RPC server on `127.0.0.1:8545` and the P2P listener on `0.0.0.0:30303`.
+
+### 3 — Check Node Status
+
+```bash
+lattice-cli node status
+```
+
+Wait until the node reports it is fully synced before doing anything else.
 
 ---
 
-## 📖 Mining Commands
+## ⛏️ Mining
 
-### **Start Mining**
+### Option A — Built-in miner (simplest)
+
+Pass `--mine` directly to `lattice-node`:
+
 ```bash
-# Auto-detect and use optimal threads
-lattice-miner
-
-# Or specify thread count (recommended: 75% of your CPU cores)
-lattice-miner --threads 4
+lattice-node \
+  --mine \
+  --mining-threads 4 \
+  --coinbase <your-address>
 ```
 
-### **Check Your Balance**
+### Option B — Standalone miner (recommended for performance)
+
+Run the node and the miner in separate terminals:
+
 ```bash
-lattice-cli wallet balance
+# Terminal 1 — node
+lattice-node
+
+# Terminal 2 — miner (connects to node via RPC)
+lattice-miner --threads 4 --coinbase <your-address>
 ```
 
-### **Check Mining Status**
-```bash
-lattice-cli mining status
-```
+### Mining thread recommendation
 
-### **View Your Wallet Address**
+| CPU cores | Recommended `--threads` |
+|-----------|------------------------|
+| 2 | 2 |
+| 4 | 3–4 |
+| 8 | 6–8 |
+| 16+ | 12–16 |
+
+---
+
+## 💵 Block Rewards
+
+| Parameter | Value |
+|-----------|-------|
+| Reward per block | 10 LAT |
+| Target block time | ~15 seconds |
+| Daily emission | ~57,600 LAT |
+
+---
+
+## 📖 Wallet Commands
+
 ```bash
+# Create new wallet
+lattice-cli wallet create
+
+# Show your address
 lattice-cli wallet address
-```
 
-### **Stop Mining**
-Just press `Ctrl+C` in the mining window.
+# Check balance (requires node running)
+lattice-cli wallet balance <address>
+
+# Export private key
+lattice-cli wallet export
+
+# Send tokens
+lattice-cli tx send --to <address> --amount 1.5
+```
 
 ---
 
 ## ⚙️ System Requirements
 
-### **Minimum** (Can mine, but slower)
-- **CPU:** 2 cores
-- **RAM:** 4 GB
-- **Disk:** 20 GB free space
-- **Internet:** Any stable connection
-
-### **Recommended** (Good mining performance)
-- **CPU:** 4+ cores
-- **RAM:** 8 GB
-- **Disk:** 50 GB free space (SSD preferred)
-- **Internet:** Broadband connection
-
-### **Optimal** (Best mining performance)
-- **CPU:** 8+ cores (more is better!)
-- **RAM:** 16 GB
-- **Disk:** 100 GB SSD
-- **Internet:** Stable broadband
-- **Cooling:** Good CPU cooling (mining generates heat)
+| Tier | CPU | RAM | Disk |
+|------|-----|-----|------|
+| Minimum | 2 cores | 4 GB | 20 GB |
+| Recommended | 4+ cores | 8 GB | 50 GB SSD |
+| Optimal | 8+ cores | 16 GB | 100 GB SSD |
 
 ---
 
-## 💡 Mining Tips & Optimization
+## 🔐 Wallet Backup
 
-### **Maximize Your Earnings**
-✅ **Use 75% of CPU cores** - Leave some for your system  
-✅ **Keep your node synced** - Mining on unsynced node won't work  
-✅ **Stable internet** - Lost connection = lost mining time  
-✅ **Good cooling** - Better cooling = better performance  
-✅ **Run 24/7** - More uptime = more rewards  
+Your wallet is at `./wallet.json` (or the path you specified at creation).
 
-### **Things to Avoid**
-❌ Don't use 100% CPU - system needs breathing room  
-❌ Don't mine on laptops 24/7 - overheating risk  
-❌ Don't forget to backup your wallet  
-❌ Don't close miner during payouts  
+```bash
+# Backup (Linux/macOS)
+cp wallet.json ~/wallet-backup-$(date +%Y%m%d).json
+chmod 600 ~/wallet-backup-*.json
+```
 
-### **Monitor Temperature**
-Keep CPU temperature below 80°C (176°F) for optimal performance and hardware longevity.
+**⚠️ If you lose your wallet file and password, your LAT is gone forever. Back it up.**
 
 ---
 
 ## 🆘 Troubleshooting
 
-### **Mining not starting?**
+| Problem | Fix |
+|---------|-----|
+| Node won't start | Check port 30303 isn't already in use |
+| Miner shows RPC error | Make sure `lattice-node` is running first |
+| Invalid coinbase address | Address must be from `lattice-cli wallet address`, not a Bitcoin address |
+| No peers | Open port 30303 TCP in your firewall |
+| Low hashrate | Increase `--threads`, close background apps |
+
 ```bash
-# Check if node is synced
-lattice-cli node status
-
-# If not synced, wait for sync to complete
-# Mining will start automatically when synced
-```
-
-### **No rewards appearing?**
-- Wait at least 10-15 minutes (blocks take time to mine)
-- Check your mining status: `lattice-cli mining status`
-- Ensure your wallet is created: `lattice-cli wallet address`
-
-### **Low hashrate?**
-- Increase thread count: `lattice-miner --threads 8`
-- Close other programs to free up CPU
-- Check CPU temperature (thermal throttling reduces performance)
-
-### **Connection issues?**
-```bash
-# Test network connectivity
+# Diagnose connectivity
 lattice-cli node peers
 
-# If no peers, check firewall settings
-# Port 30333 needs to be accessible
+# Open P2P port (Ubuntu)
+sudo ufw allow 30303/tcp
 ```
 
 ---
 
-## 📚 More Information
+## 📚 Documentation
 
-- **📖 Complete Mining Guide:** [MINING_GUIDE.md](MINING_GUIDE.md)
-- **🚀 Advanced Features:** [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md)
-- **📊 Project Status:** [FINAL_REPORT.md](FINAL_REPORT.md)
-- **🐳 Docker Deployment:** [DEPLOYMENT.md](DEPLOYMENT.md)
-
----
-
-## 🔐 Security & Wallet
-
-### **Backup Your Wallet**
-Your wallet file is located at: `~/.lattice/wallet.json`
-
-**⚠️ IMPORTANT:** Back up this file regularly! If you lose it, you lose your LAT tokens forever.
-
-```bash
-# Backup your wallet
-cp ~/.lattice/wallet.json ~/wallet-backup-$(date +%Y%m%d).json
-```
-
-### **Quantum-Resistant Security**
-Lattice uses **CRYSTALS-Dilithium3** (NIST standard) for signatures, making your coins safe from quantum computers. Your LAT tokens are protected against future quantum attacks!
-
----
-
-## 💬 Community & Support
-
-- **🌐 Website:** https://latticechain.io
-- **💬 Discord:** https://discord.gg/lattice
-- **🐦 Twitter:** https://twitter.com/latticechain
-- **📖 Docs:** https://docs.latticechain.io
-- **🐛 GitHub:** https://github.com/dill-lk/Lattice
-
----
-
-## 🎁 Bonus Features
-
-### **Mining Pool Support** (Coming Soon)
-Join mining pools to get more consistent payouts, even with lower hashrate.
-
-### **Mobile Wallet** (Roadmap)
-Check your balance and send transactions from your phone.
-
-### **Staking** (Future)
-Earn passive income by staking your LAT tokens.
-
----
-
-## 🏆 Join the Network
-
-**Be part of the quantum-resistant revolution!** Every miner helps secure the network and make cryptocurrency safer for the future.
-
-Start mining today and earn LAT tokens while protecting the future of finance! 🚀⛏️💎
+| Document | Contents |
+|----------|---------|
+| [ADMIN.md](ADMIN.md) | Full operator guide — hosting a node, systemd service, advanced config |
+| [MINING_GUIDE.md](MINING_GUIDE.md) | In-depth mining optimisation |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker & production deployment |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to build from source and contribute |
+| [docs/api-reference.md](docs/api-reference.md) | JSON-RPC API reference |
 
 ---
 
 ## 📝 For Developers
 
-If you're a developer looking to build on Lattice or contribute to the codebase:
+```bash
+# Build from source (requires Rust 1.75+ and RocksDB dev libraries)
+git clone https://github.com/dill-lk/Lattice.git
+cd Lattice
+cargo build --release
 
-- **Build from source:** `cargo build --release`
-- **Run tests:** `cargo test`
-- **Architecture docs:** See `docs/` folder
-- **Contributing:** See [CONTRIBUTING.md](CONTRIBUTING.md)
-- **API docs:** See [lattice-rpc/README.md](crates/lattice-rpc/README.md)
+# Run tests
+cargo test
+
+# Lint
+cargo clippy --all -- -D warnings
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development setup guide.
+
+---
+
+## 💬 Community & Support
+
+- **GitHub Issues:** https://github.com/dill-lk/Lattice/issues
+- **Releases:** https://github.com/dill-lk/Lattice/releases
+- **Source:** https://github.com/dill-lk/Lattice
 
 ---
 
 ## 📄 License
 
-MIT OR Apache-2.0 - Free and open source forever! ❤️
+MIT OR Apache-2.0
 

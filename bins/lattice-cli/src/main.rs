@@ -24,6 +24,7 @@ const DEFAULT_RPC_URL: &str = "http://127.0.0.1:8545";
 #[command(name = "lattice-cli")]
 #[command(version, about = "Lattice blockchain CLI - Wallet and tools")]
 #[command(propagate_version = true)]
+#[command(arg_required_else_help = true)]
 struct Args {
     /// RPC endpoint URL
     #[arg(long, global = true, default_value = DEFAULT_RPC_URL)]

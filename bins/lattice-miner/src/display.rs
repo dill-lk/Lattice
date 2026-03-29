@@ -173,7 +173,7 @@ pub async fn display_loop(
                     let line = live_line(&snap, h, &stats.uptime_string());
                     print!("\r{}", line);
                     let _ = io::stdout().flush();
-                } else if elapsed_secs % non_tty_stats_secs == 0 {
+                } else if elapsed_secs.is_multiple_of(non_tty_stats_secs) {
                     // Non-TTY fallback: plain stats line periodically.
                     println!("{}", snap);
                 }

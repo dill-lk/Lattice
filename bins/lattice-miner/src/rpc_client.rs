@@ -165,6 +165,7 @@ impl RpcClient {
     }
 
     /// Get the current block number
+    #[allow(dead_code)]
     pub async fn block_number(&self) -> Result<u64> {
         let result = self.call("lat_blockNumber", json!([])).await?;
 

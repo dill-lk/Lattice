@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 lattice-core = { workspace = true }
+lattice-consensus = { workspace = true }
 lattice-storage = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

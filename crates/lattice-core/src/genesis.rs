@@ -88,7 +88,7 @@ impl GenesisConfig {
         Self {
             network: Network::Testnet,
             timestamp: 1699000000000,
-            difficulty: 100_000,
+            difficulty: 5,  // Match lattice-node testnet difficulty
             extra_data: "Lattice Testnet Genesis".to_string(),
             allocations: vec![
                 GenesisAccountAllocation {

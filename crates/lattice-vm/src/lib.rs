@@ -49,3 +49,10 @@ pub use error::{Result, VmError};
 pub use gas::{GasCosts, GasMeter};
 pub use host::{BlockContext, CallContext, HostFunctions, Log};
 pub use runtime::{DeploymentResult, ExecutionResult, Runtime};
+
+
+// Work around a toolchain/linker mismatch where `__rust_probestack` is not
+// provided when linking test binaries that pull in Wasmer.
+#[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn __rust_probestack() {}

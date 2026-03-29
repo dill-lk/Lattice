@@ -54,7 +54,7 @@ impl MerkleMountainRange {
         let leaf_index = pos as usize;
         let n = self.size as usize;
 
-        let (peak_idx, tree_start, tree_size) = Self::find_peak_for_leaf(n, leaf_index)?;
+        let (_peak_idx, tree_start, tree_size) = Self::find_peak_for_leaf(n, leaf_index)?;
 
         let mut sibling_hashes = Vec::new();
         Self::collect_proof(

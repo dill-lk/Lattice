@@ -7,11 +7,10 @@
 //! - Persistence across restarts
 
 use crate::error::{Result, StorageError};
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::BorshDeserialize;
 use lattice_core::{Address, Amount, Hash, Transaction};
 use parking_lot::RwLock;
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, WriteBatch, DB};
-use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -295,7 +294,7 @@ impl MempoolStore {
             let index = self.index.read();
             let mut entries: Vec<_> = index.values().cloned().collect();
             // Sort by priority (ascending, so lowest priority first)
-            entries.sort_by(|a, b| a.cmp(b));
+            entries.sort();
 
             for entry in entries.into_iter().take(count) {
                 to_remove.push(entry.hash);
@@ -406,8 +405,10 @@ impl MempoolStore {
         let index = self.index.read();
         let mut entries: Vec<_> = index.values().cloned().collect();
 
-        // Sort by priority (descending)
-        entries.sort_by(|a, b| b.cmp(a));
+        // Sort by absolute fee descending (highest fee first), with fee_per_gas as tiebreaker.
+        // Absolute fee is used as the primary key so that miners prefer transactions that
+        // pay more in total, regardless of their gas limit.
+        entries.sort_by(|a, b| b.fee.cmp(&a.fee).then_with(|| b.fee_per_gas.cmp(&a.fee_per_gas)));
 
         let mut result = Vec::with_capacity(limit.min(entries.len()));
         for entry in entries.into_iter().take(limit) {

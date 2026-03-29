@@ -2277,6 +2277,8 @@ dependencies = [
  "lattice-core",
  "parking_lot",
  "rocksdb",
+ "sha3",
+ "tempfile",
  "thiserror 1.0.69",
  "tracing",
 ]

@@ -6,7 +6,7 @@
 //! - Latest block tracking
 
 use crate::error::{Result, StorageError};
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::BorshDeserialize;
 use lattice_core::{Block, BlockHeight, Hash};
 use parking_lot::RwLock;
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, DB};
@@ -117,7 +117,7 @@ impl BlockStore {
         // Update latest if this is the new tip
         let should_update = {
             let cache = self.latest_cache.read();
-            cache.map_or(true, |(_, h)| height > h)
+            cache.is_none_or(|(_, h)| height > h)
         };
 
         if should_update {
@@ -248,7 +248,7 @@ impl BlockStore {
             // Update latest if needed
             let should_update = {
                 let cache = self.latest_cache.read();
-                cache.map_or(false, |(h, _)| &h == hash)
+                cache.is_some_and(|(h, _)| &h == hash)
             };
 
             if should_update {

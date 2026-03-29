@@ -243,14 +243,17 @@ function Print-Completion {
     Write-Host "   1. Create a wallet:" -ForegroundColor Yellow
     Write-Host "      lattice-cli wallet create" -ForegroundColor Blue
     Write-Host ""
-    Write-Host "   2. Start the node:" -ForegroundColor Yellow
+    Write-Host "   2. Get your wallet address:" -ForegroundColor Yellow
+    Write-Host "      lattice-cli wallet address" -ForegroundColor Blue
+    Write-Host ""
+    Write-Host "   3. Start the node:" -ForegroundColor Yellow
     Write-Host "      lattice-node" -ForegroundColor Blue
     Write-Host ""
-    Write-Host "   3. Check node status:" -ForegroundColor Yellow
+    Write-Host "   4. Check node status:" -ForegroundColor Yellow
     Write-Host "      lattice-cli node status" -ForegroundColor Blue
     Write-Host ""
-    Write-Host "   4. Start mining (replace with your address):" -ForegroundColor Yellow
-    Write-Host "      lattice-node --mine --coinbase <your-address>" -ForegroundColor Blue
+    Write-Host "   5. Start mining (replace YOUR_ADDRESS with your wallet address):" -ForegroundColor Yellow
+    Write-Host "      lattice-node --mine --coinbase YOUR_ADDRESS" -ForegroundColor Blue
     Write-Host ""
     Write-Host "📦 Releases & source:" -ForegroundColor Cyan
     Write-Host "   https://github.com/$GithubRepo/releases" -ForegroundColor Blue

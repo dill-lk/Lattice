@@ -331,6 +331,7 @@ mod tests {
     #[test]
     fn test_keypair_generation() {
         let keypair = Keypair::generate();
+        eprintln!("ACTUAL_PK={} ACTUAL_SK={}", keypair.public.len(), keypair.secret.len());
         assert_eq!(keypair.public.len(), PUBLIC_KEY_SIZE);
         assert_eq!(keypair.secret.len(), SECRET_KEY_SIZE);
     }
@@ -341,6 +342,7 @@ mod tests {
         let message = b"Hello, quantum-resistant world!";
         
         let signature = keypair.sign(message);
+        eprintln!("ACTUAL_SIG_LEN={}", signature.len());
         assert!(keypair.verify(message, &signature));
         assert!(signature.is_valid_length());
     }

@@ -9,6 +9,8 @@
 //! - [`merkle`] - Merkle tree and proof structures
 //! - [`abi`] - Smart contract ABI encoding/decoding
 //! - [`validation`] - Block and transaction validation logic
+//! - [`tokenomics`] - Token supply, genesis allocation, and vesting
+//! - [`genesis`] - Genesis block creation and initial state
 
 mod address;
 mod block;
@@ -16,26 +18,28 @@ mod error;
 mod state;
 mod transaction;
 pub mod abi;
+pub mod genesis;
 pub mod governance;
 pub mod health;
 pub mod merkle;
 pub mod metrics;
 pub mod mmr;
 pub mod receipt;
+pub mod tokenomics;
 pub mod validation;
 pub mod validator;
 
-pub use address::Address;
+pub use address::{Address, AddressError};
 pub use block::{Block, BlockHeader};
 pub use error::{CoreError, Result};
 pub use receipt::{Log, LogFilter, Receipt};
-pub use state::{Account, State};
+pub use state::{Account, State, StateError};
 pub use transaction::{Transaction, TransactionKind};
 
 /// Block height type
 pub type BlockHeight = u64;
 
-/// Amount in smallest unit (1 LAT = 10^18 units)
+/// Amount in smallest unit (1 LAT = 10^8 Latt)
 pub type Amount = u128;
 
 /// Timestamp in milliseconds since Unix epoch

@@ -189,10 +189,13 @@ fn create_genesis_block(network: Network) -> Block {
         tx_root: [0u8; 32],
         state_root: [0u8; 32],
         timestamp,
+        // Initial difficulty - will auto-adjust based on block times
+        // With Argon2 (64MB memory-hard), each hash takes ~1-2 seconds on CPU
+        // Start very low so mining works on regular laptops
         difficulty: match network {
-            Network::Mainnet => 1_000_000,
-            Network::Testnet => 100_000,
-            Network::Devnet => 1,
+            Network::Mainnet => 10,      // ~5-10 hashes to find block initially
+            Network::Testnet => 5,       // Easy for testing
+            Network::Devnet => 1,        // Instant for development
         },
         nonce: 0,
         coinbase: Address::zero(),
@@ -375,8 +378,8 @@ async fn build_block_template(
         .flatten()
         .map(|b| b.header.difficulty)
         .unwrap_or(match state.network {
-            Network::Mainnet => 1_000_000,
-            Network::Testnet => 100_000,
+            Network::Mainnet => 10,      // Low initial difficulty for CPU mining
+            Network::Testnet => 5,
             Network::Devnet => 1,
         });
 

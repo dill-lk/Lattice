@@ -189,6 +189,7 @@ sudo ufw allow 30303/tcp
 
 | Document | Contents |
 |----------|---------|
+| [TOKENOMICS.md](TOKENOMICS.md) | Token supply, genesis allocation, vesting schedule |
 | [ADMIN.md](ADMIN.md) | Full operator guide — hosting a node, systemd service, advanced config |
 | [MINING_GUIDE.md](MINING_GUIDE.md) | In-depth mining optimisation |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Docker & production deployment |

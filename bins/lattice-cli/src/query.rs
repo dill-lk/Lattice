@@ -218,15 +218,17 @@ pub async fn get_account(address: &str, rpc_url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Format amount in LAT (18 decimals)
+/// Format amount in LAT (8 decimals)
 fn format_amount(amount: u128) -> String {
-    let whole = amount / 1_000_000_000_000_000_000u128;
-    let frac = amount % 1_000_000_000_000_000_000u128;
+    use lattice_core::tokenomics::LATT_PER_LAT;
+    
+    let whole = amount / LATT_PER_LAT;
+    let frac = amount % LATT_PER_LAT;
 
     if frac == 0 {
         format!("{}", whole)
     } else {
-        let frac_str = format!("{:018}", frac);
+        let frac_str = format!("{:08}", frac);
         let trimmed = frac_str.trim_end_matches('0');
         format!("{}.{}", whole, trimmed)
     }

@@ -291,13 +291,15 @@ fn live_line(snap: &StatsSnapshot, height: u64, uptime: &str) -> String {
     let rate = MiningStats::format_hash_rate(snap.current_hash_rate);
     let avg = MiningStats::format_hash_rate(snap.average_hash_rate);
     let found = snap.blocks_found.to_string();
+    let total_hashes = fmt_number(snap.total_hashes);
 
     format!(
-        " {}  {}  │  {}  (avg {})  │  {} found  │  up {}   ",
+        " {}  {}  │  {}  (avg {})  │  {} hashes  │  {} found  │  up {}   ",
         "⛏",
         block,
         rate.green(),
         avg.dimmed(),
+        total_hashes.cyan(),
         found.yellow(),
         uptime,
     )

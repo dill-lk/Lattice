@@ -310,10 +310,11 @@ fn parse_amount(s: &str, is_wei: bool) -> anyhow::Result<u128> {
     }
 }
 
-/// Parse LAT amount string (e.g., "1.5" LAT = 1.5 * 10^18 wei)
+/// Parse LAT amount string (e.g., "1.5" LAT = 1.5 * 10^8 Latt)
 fn parse_lat_amount(s: &str) -> anyhow::Result<u128> {
-    const DECIMALS: u32 = 18;
-    const MULTIPLIER: u128 = 10u128.pow(DECIMALS);
+    // 8 decimals for LAT (like Bitcoin)
+    const DECIMALS: u32 = 8;
+    const MULTIPLIER: u128 = 100_000_000; // 10^8
 
     if let Some(dot_pos) = s.find('.') {
         let whole_str = &s[..dot_pos];
@@ -333,7 +334,7 @@ fn parse_lat_amount(s: &str) -> anyhow::Result<u128> {
                 .map_err(|_| anyhow::anyhow!("Invalid whole part: {}", whole_str))?
         };
 
-        // Parse fractional part (pad or truncate to 18 digits)
+        // Parse fractional part (pad or truncate to 8 digits)
         let frac_padded = if frac_str.len() >= DECIMALS as usize {
             frac_str[..DECIMALS as usize].to_string()
         } else {
@@ -344,7 +345,7 @@ fn parse_lat_amount(s: &str) -> anyhow::Result<u128> {
             .parse()
             .map_err(|_| anyhow::anyhow!("Invalid fractional part: {}", frac_str))?;
 
-        // Combine: whole * 10^18 + frac
+        // Combine: whole * 10^8 + frac
         let result = whole
             .checked_mul(MULTIPLIER)
             .and_then(|w| w.checked_add(frac))
@@ -366,34 +367,39 @@ fn parse_lat_amount(s: &str) -> anyhow::Result<u128> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::tokenomics::LATT_PER_LAT;
 
     #[test]
     fn test_parse_lat_amount_whole() {
-        assert_eq!(parse_lat_amount("1").unwrap(), 1_000_000_000_000_000_000);
-        assert_eq!(parse_lat_amount("100").unwrap(), 100_000_000_000_000_000_000);
+        // 1 LAT = 100_000_000 Latt (8 decimals)
+        assert_eq!(parse_lat_amount("1").unwrap(), LATT_PER_LAT);
+        assert_eq!(parse_lat_amount("100").unwrap(), 100 * LATT_PER_LAT);
         assert_eq!(parse_lat_amount("0").unwrap(), 0);
     }
 
     #[test]
     fn test_parse_lat_amount_decimal() {
-        assert_eq!(parse_lat_amount("1.5").unwrap(), 1_500_000_000_000_000_000);
-        assert_eq!(parse_lat_amount("0.001").unwrap(), 1_000_000_000_000_000);
-        assert_eq!(
-            parse_lat_amount("0.000000000000000001").unwrap(),
-            1
-        );
+        // 1.5 LAT = 150_000_000 Latt
+        assert_eq!(parse_lat_amount("1.5").unwrap(), 150_000_000);
+        // 0.001 LAT = 100_000 Latt
+        assert_eq!(parse_lat_amount("0.001").unwrap(), 100_000);
+        // 0.00000001 LAT = 1 Latt (smallest unit)
+        assert_eq!(parse_lat_amount("0.00000001").unwrap(), 1);
     }
 
     #[test]
     fn test_parse_lat_amount_edge_cases() {
-        assert_eq!(parse_lat_amount(".5").unwrap(), 500_000_000_000_000_000);
+        // .5 LAT = 50_000_000 Latt
+        assert_eq!(parse_lat_amount(".5").unwrap(), 50_000_000);
         assert!(parse_lat_amount("1.2.3").is_err());
         assert!(parse_lat_amount("abc").is_err());
     }
 
     #[test]
     fn test_parse_amount_wei_flag() {
+        // Raw Latt mode
         assert_eq!(parse_amount("1000000", true).unwrap(), 1000000);
-        assert_eq!(parse_amount("1", false).unwrap(), 1_000_000_000_000_000_000);
+        // LAT mode (converted to Latt)
+        assert_eq!(parse_amount("1", false).unwrap(), LATT_PER_LAT);
     }
 }

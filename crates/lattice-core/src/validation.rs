@@ -25,8 +25,9 @@ pub const MIN_TRANSACTION_FEE: Amount = 1000;
 /// Block time tolerance (blocks can't be too far in future)
 pub const FUTURE_BLOCK_TIME_TOLERANCE_MS: u64 = 15 * 60 * 1000; // 15 minutes
 
-/// Block reward in base units (10 LAT)
-pub const BLOCK_REWARD: Amount = 10_000_000_000_000_000_000;
+/// Block reward in base units (10 LAT = 10 * 10^8 Latt)
+/// Now uses tokenomics module for consistency
+pub use crate::tokenomics::BLOCK_REWARD;
 
 /// Transaction validation context
 pub struct TxValidationContext<'a> {

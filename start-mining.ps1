@@ -3,9 +3,9 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "`n╔══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║                                                          ║" -ForegroundColor Cyan
-Write-Host "║        ⛏️  LATTICE QUICK START MINING ⛏️               ║" -ForegroundColor Green
-Write-Host "║                                                          ║" -ForegroundColor Cyan
+Write-Host "║                                                                              ║" -ForegroundColor Cyan
+Write-Host "║        ⛏️  LATTICE QUICK START MINING ⛏️                                    ║" -ForegroundColor Green
+Write-Host "║                                                                              ║" -ForegroundColor Cyan
 Write-Host "╚══════════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
 # Check if lattice is installed
@@ -60,7 +60,7 @@ try {
 # Start mining
 Write-Host "Starting miner with $threads threads...`n" -ForegroundColor Green
 Write-Host "╔══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║  Press Ctrl+C to stop mining                             ║" -ForegroundColor Cyan
+Write-Host "║  Press Ctrl+C to stop mining                                               ║" -ForegroundColor Cyan
 Write-Host "╚══════════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
 if ($walletAddr) {

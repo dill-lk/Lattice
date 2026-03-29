@@ -17,7 +17,7 @@ use rpc_client::{RpcClient, WorkSolution, WorkTemplate};
 use stats::MiningStats;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -48,8 +48,8 @@ struct Args {
     #[arg(long, default_value = "10")]
     stats_interval: u64,
 
-    /// Use light PoW config (for testing only)
-    #[arg(long, hide = true)]
+    /// Use light PoW config (for testing only - faster hashing)
+    #[arg(long)]
     light: bool,
 }
 
@@ -311,8 +311,11 @@ fn mining_loop(
 
         debug!("Mining block at height {}", work.header.height);
 
-        let chunk_size: u64 = 100_000;
+        // With Argon2 memory-hard PoW, each hash takes ~1-2 seconds
+        // Use small chunks so stats update frequently
+        let chunk_size: u64 = 50;  // Small chunks for responsive stats
         let mut start_nonce: u64 = 0;
+        let mut last_stats_update = Instant::now();
 
         loop {
             if state.shutdown.load(Ordering::Relaxed) {
@@ -359,8 +362,22 @@ fn mining_loop(
                 }
             }
 
+            // Update stats after each chunk for responsive display
             let miner_stats = miner.stats();
-            stats.add_hashes(miner_stats.hashes);
+            if miner_stats.hashes > 0 {
+                stats.add_hashes(miner_stats.hashes);
+            }
+            
+            // Log progress every 5 seconds
+            if last_stats_update.elapsed() >= Duration::from_secs(5) {
+                let snap = stats.snapshot();
+                debug!(
+                    "Mining progress: {} hashes, {:.2} H/s",
+                    snap.total_hashes,
+                    snap.current_hash_rate
+                );
+                last_stats_update = Instant::now();
+            }
         }
     }
 }

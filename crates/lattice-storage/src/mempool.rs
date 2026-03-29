@@ -294,7 +294,7 @@ impl MempoolStore {
             let index = self.index.read();
             let mut entries: Vec<_> = index.values().cloned().collect();
             // Sort by priority (ascending, so lowest priority first)
-            entries.sort_by(|a, b| a.cmp(b));
+            entries.sort();
 
             for entry in entries.into_iter().take(count) {
                 to_remove.push(entry.hash);

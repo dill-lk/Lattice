@@ -175,7 +175,7 @@ impl StateStore {
         }
 
         // Include count in hash for empty state differentiation
-        hasher.update(&count.to_le_bytes());
+        hasher.update(count.to_le_bytes());
 
         let mut root = [0u8; 32];
         root.copy_from_slice(&hasher.finalize());
@@ -210,11 +210,11 @@ impl StateStore {
 
         // Store snapshot
         let snapshot_key = height.to_le_bytes();
-        self.db.put_cf(cf_snapshots, &snapshot_key, &snapshot_data)?;
+        self.db.put_cf(cf_snapshots, snapshot_key, &snapshot_data)?;
 
         // Store metadata (state root at this height)
         let state_root = self.compute_state_root()?;
-        self.db.put_cf(cf_meta, &snapshot_key, state_root)?;
+        self.db.put_cf(cf_meta, snapshot_key, state_root)?;
 
         info!(height, "Created state snapshot");
         Ok(())
@@ -231,7 +231,7 @@ impl StateStore {
         // Get snapshot data
         let snapshot_data = self
             .db
-            .get_cf(cf_snapshots, &snapshot_key)?
+            .get_cf(cf_snapshots, snapshot_key)?
             .ok_or(StorageError::SnapshotNotFound(height))?;
 
         // Clear current state
@@ -272,7 +272,7 @@ impl StateStore {
         self.db.write(batch)?;
 
         // Restore cached state root from metadata
-        if let Some(root_bytes) = self.db.get_cf(cf_meta, &snapshot_key)? {
+        if let Some(root_bytes) = self.db.get_cf(cf_meta, snapshot_key)? {
             let root: Hash = root_bytes
                 .as_slice()
                 .try_into()

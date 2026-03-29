@@ -12,12 +12,12 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::Parser;
 use parking_lot::RwLock;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
 
 use config::{NodeConfig, parse_network};
 use lattice_core::{Block, BlockHeader, Transaction, Address, Network, BlockHeight, Hash};
-use lattice_consensus::{Miner, MinerBuilder, MiningResult, DifficultyAdjuster};
+use lattice_consensus::{MinerBuilder, MiningResult, DifficultyAdjuster, PoWConfig};
 use lattice_crypto::sha3_256;
 use lattice_storage::{BlockStore, StateStore, MempoolStore};
 use lattice_rpc::{RpcServer, RpcConfig as RpcServerConfig, RpcHandlers, ChainState};
@@ -195,7 +195,7 @@ fn create_genesis_block(network: Network) -> Block {
             Network::Devnet => 1,
         },
         nonce: 0,
-        coinbase: Address::default(),
+        coinbase: Address::zero(),
     };
 
     Block {
@@ -247,7 +247,7 @@ async fn run_miner(
                 Ok(bytes) if bytes.len() == 20 => {
                     let mut arr = [0u8; 20];
                     arr.copy_from_slice(&bytes);
-                    Address(arr)
+                    Address::from_bytes(arr)
                 }
                 _ => {
                     tracing::error!("Invalid coinbase address: {}", addr);
@@ -262,7 +262,7 @@ async fn run_miner(
     };
 
     tracing::info!("Miner started with {} threads, coinbase: 0x{}", 
-        config.threads, hex::encode(coinbase.0));
+        config.threads, hex::encode(coinbase.as_bytes()));
 
     let miner = MinerBuilder::new()
         .threads(config.threads)
@@ -282,7 +282,7 @@ async fn run_miner(
         }
 
         // Build block template
-        let template = match build_block_template(&state, coinbase).await {
+        let template = match build_block_template(&state, coinbase.clone()).await {
             Ok(t) => t,
             Err(e) => {
                 tracing::warn!("Failed to build block template: {}", e);
@@ -297,8 +297,7 @@ async fn run_miner(
         let result = tokio::task::spawn_blocking({
             let miner = miner.clone();
             let header = template.header.clone();
-            let difficulty = template.header.difficulty;
-            move || miner.mine(&header, difficulty)
+            move || miner.mine(&header)
         }).await;
 
         match result {
@@ -348,7 +347,7 @@ async fn build_block_template(
     let parent_hash = state.tip();
 
     // Get transactions from mempool
-    let txs = state.mempool.get_best_txs(1000)?;
+    let txs = state.mempool.get_sorted_by_fee(1000)?;
 
     // Compute tx_root
     let tx_hashes: Vec<&[u8]> = txs.iter()
@@ -360,8 +359,16 @@ async fn build_block_template(
         sha3_256(&tx_hashes.concat())
     };
 
-    // Get current difficulty
-    let difficulty = state.difficulty.current_difficulty();
+    // Get current difficulty from latest block, or use network default
+    let difficulty = state.block_store.get_latest()
+        .ok()
+        .flatten()
+        .map(|b| b.header.difficulty)
+        .unwrap_or(match state.network {
+            Network::Mainnet => 1_000_000,
+            Network::Testnet => 100_000,
+            Network::Devnet => 1,
+        });
 
     let header = BlockHeader {
         version: 1,
@@ -417,7 +424,7 @@ async fn run_event_loop(
                         // Remove mined transactions from mempool
                         for tx in &block.transactions {
                             let tx_hash = sha3_256(&borsh::to_vec(tx).unwrap_or_default());
-                            let _ = state.mempool.remove_tx(&tx_hash);
+                            let _ = state.mempool.remove(&tx_hash);
                         }
                     }
                     Ok(NodeEvent::PeerConnected(peer)) => {
@@ -510,9 +517,9 @@ fn validate_block(state: &NodeState, block: &Block) -> anyhow::Result<()> {
     }
 
     // Verify PoW
-    let header_bytes = borsh::to_vec(&block.header)?;
-    let block_hash = sha3_256(&header_bytes);
-    if !lattice_consensus::verify_pow(&block_hash, block.header.difficulty) {
+    if !lattice_consensus::verify_pow(&block.header, &PoWConfig::default())
+        .unwrap_or(false)
+    {
         anyhow::bail!("Invalid proof of work");
     }
 
@@ -532,7 +539,7 @@ async fn handle_new_transaction(state: &NodeState, tx: &Transaction) {
     }
 
     // Add to mempool
-    if let Err(e) = state.mempool.add_tx(tx.clone()) {
+    if let Err(e) = state.mempool.add(tx) {
         tracing::warn!("Failed to add transaction to mempool: {}", e);
     }
 }
@@ -545,16 +552,15 @@ fn validate_transaction(tx: &Transaction) -> anyhow::Result<()> {
     }
 
     // Verify signature using public key
-    if !tx.public_key.is_empty() {
-        lattice_crypto::dilithium::verify(&borsh::to_vec(tx)?, &tx.signature, &tx.public_key)
-            .map_err(|e| anyhow::anyhow!("Invalid signature: {}", e))?;
+    if !tx.public_key.is_empty() && !tx.verify_signature() {
+        anyhow::bail!("Invalid signature");
     }
 
     Ok(())
 }
 
 /// Execute a transaction and update state
-fn execute_transaction(state: &NodeState, tx: &Transaction) -> anyhow::Result<()> {
+fn execute_transaction(_state: &NodeState, tx: &Transaction) -> anyhow::Result<()> {
     match tx.kind {
         lattice_core::TransactionKind::Transfer => {
             // Simple transfer: update balances
@@ -601,7 +607,7 @@ async fn start_rpc_server(
     // Create chain state from node state
     let chain_state = create_chain_state(&state)?;
     
-    let handlers = RpcHandlers::with_state(chain_state);
+    let handlers = RpcHandlers::with_state(Arc::new(RwLock::new(chain_state)));
     let server = RpcServer::with_handlers(rpc_config, handlers);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
@@ -619,14 +625,23 @@ async fn start_rpc_server(
 
 /// Create ChainState from NodeState for RPC handlers
 fn create_chain_state(state: &NodeState) -> anyhow::Result<ChainState> {
-    let chain_state = ChainState::default();
-    
+    let mut chain_state = ChainState::new();
+
     // Load recent blocks
     let height = state.height();
     for h in height.saturating_sub(100)..=height {
         if let Ok(Some(block)) = state.block_store.get_by_height(h) {
             let hash = sha3_256(&borsh::to_vec(&block.header)?);
-            chain_state.add_block(block, hash);
+            // Index transactions
+            for tx in &block.transactions {
+                let tx_hash = sha3_256(&borsh::to_vec(tx).unwrap_or_default());
+                chain_state.transactions.insert(tx_hash, (tx.clone(), Some(hash)));
+            }
+            if block.header.height > chain_state.height {
+                chain_state.height = block.header.height;
+            }
+            chain_state.blocks_by_height.insert(block.header.height, block.clone());
+            chain_state.blocks_by_hash.insert(hash, block);
         }
     }
 
@@ -798,7 +813,7 @@ async fn main() -> anyhow::Result<()> {
     let genesis_hash = sha3_256(&borsh::to_vec(&genesis.header)?);
 
     // Get current chain tip
-    let (chain_height, chain_tip) = match block_store.latest()? {
+    let (chain_height, chain_tip) = match block_store.get_latest()? {
         Some(block) => {
             let hash = sha3_256(&borsh::to_vec(&block.header)?);
             (block.header.height, hash)
@@ -822,7 +837,7 @@ async fn main() -> anyhow::Result<()> {
         chain_height: RwLock::new(chain_height),
         chain_tip: RwLock::new(chain_tip),
         sync_status: RwLock::new(SyncStatus::InitialSync),
-        difficulty: Arc::new(DifficultyAdjuster::new(config.network)),
+        difficulty: Arc::new(DifficultyAdjuster::new()),
         vm_runtime: Arc::new(Runtime::new()),
         event_tx: event_tx.clone(),
     });

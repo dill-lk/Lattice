@@ -8,6 +8,7 @@ license.workspace = true
 lattice-core = { workspace = true }
 rocksdb = { workspace = true }
 borsh = { workspace = true }
+sha3 = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 parking_lot = { workspace = true }

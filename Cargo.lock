@@ -2255,6 +2255,7 @@ name = "lattice-rpc"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "borsh",
  "hex",
  "hyper 1.8.1",
  "lattice-core",

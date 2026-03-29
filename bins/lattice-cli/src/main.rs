@@ -312,9 +312,9 @@ fn parse_amount(s: &str, is_wei: bool) -> anyhow::Result<u128> {
 
 /// Parse LAT amount string (e.g., "1.5" LAT = 1.5 * 10^8 Latt)
 fn parse_lat_amount(s: &str) -> anyhow::Result<u128> {
-    // 8 decimals for LAT (like Bitcoin)
-    const DECIMALS: u32 = 8;
-    const MULTIPLIER: u128 = 100_000_000; // 10^8
+    // Use constants from the tokenomics crate for consistency.
+    const DECIMALS: u32 = lattice_core::tokenomics::DECIMALS as u32;
+    const MULTIPLIER: u128 = lattice_core::tokenomics::LATT_PER_LAT;
 
     if let Some(dot_pos) = s.find('.') {
         let whole_str = &s[..dot_pos];

@@ -17,7 +17,7 @@ use rpc_client::{RpcClient, WorkSolution, WorkTemplate};
 use stats::MiningStats;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -48,8 +48,12 @@ struct Args {
     #[arg(long, default_value = "10")]
     stats_interval: u64,
 
-    /// Use light PoW config (for testing only)
-    #[arg(long, hide = true)]
+    /// Network to mine on (determines PoW difficulty)
+    #[arg(long, default_value = "mainnet")]
+    network: String,
+
+    /// Use light PoW config (overrides --network setting)
+    #[arg(long)]
     light: bool,
 }
 
@@ -114,6 +118,7 @@ async fn main() -> Result<()> {
         num_threads,
         &args.coinbase,
         &args.rpc,
+        &args.network,
     );
 
     // Display event channel — all worker tasks send events here; the display
@@ -130,12 +135,25 @@ async fn main() -> Result<()> {
     // Create solution channel
     let (solution_tx, mut solution_rx) = mpsc::channel::<SolutionFound>(32);
 
-    // PoW configuration
+    // PoW configuration based on network
     let pow_config = if args.light {
         warn!("Using light PoW config (testing only!)");
         PoWConfig::light()
     } else {
-        PoWConfig::default()
+        match args.network.to_lowercase().as_str() {
+            "devnet" | "dev" => {
+                info!("Using devnet PoW config (fast blocks, ~2 sec)");
+                PoWConfig::devnet()
+            }
+            "testnet" | "test" => {
+                info!("Using testnet PoW config (moderate speed, ~5 sec)");
+                PoWConfig::testnet()
+            }
+            _ => {
+                info!("Using mainnet PoW config (full security, ~15 sec blocks)");
+                PoWConfig::mainnet()
+            }
+        }
     };
 
     // ── Spawn tasks ──────────────────────────────────────────────────────────
@@ -311,8 +329,11 @@ fn mining_loop(
 
         debug!("Mining block at height {}", work.header.height);
 
-        let chunk_size: u64 = 100_000;
+        // With Argon2 memory-hard PoW, each hash takes ~1-2 seconds
+        // Use small chunks so stats update frequently
+        let chunk_size: u64 = 50;  // Small chunks for responsive stats
         let mut start_nonce: u64 = 0;
+        let mut last_stats_update = Instant::now();
 
         loop {
             if state.shutdown.load(Ordering::Relaxed) {
@@ -359,8 +380,22 @@ fn mining_loop(
                 }
             }
 
+            // Update stats after each chunk for responsive display
             let miner_stats = miner.stats();
-            stats.add_hashes(miner_stats.hashes);
+            if miner_stats.hashes > 0 {
+                stats.add_hashes(miner_stats.hashes);
+            }
+            
+            // Log progress every 5 seconds
+            if last_stats_update.elapsed() >= Duration::from_secs(5) {
+                let snap = stats.snapshot();
+                debug!(
+                    "Mining progress: {} hashes, {:.2} H/s",
+                    snap.total_hashes,
+                    snap.current_hash_rate
+                );
+                last_stats_update = Instant::now();
+            }
         }
     }
 }

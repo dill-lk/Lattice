@@ -251,11 +251,12 @@ pub struct GovernanceConfig {
 impl Default for GovernanceConfig {
     fn default() -> Self {
         Self {
-            min_deposit: 1_000_000_000_000_000_000_000,  // 1000 LAT
-            voting_period: 40320,                        // ~7 days (15s blocks)
-            quorum_percentage: 0.10,                     // 10% of supply must vote
-            approval_percentage: 0.51,                   // 51% of votes must be yes
-            execution_delay: 5760,                       // ~24 hours
+            // 1000 LAT = 1000 * 10^8 Latt (using 8 decimals)
+            min_deposit: 100_000_000_000,  // 1000 LAT
+            voting_period: 40320,           // ~7 days (15s blocks)
+            quorum_percentage: 0.10,        // 10% of supply must vote
+            approval_percentage: 0.51,      // 51% of votes must be yes
+            execution_delay: 5760,          // ~24 hours
         }
     }
 }
@@ -469,14 +470,17 @@ pub enum GovernanceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tokenomics::TOTAL_SUPPLY;
 
     #[test]
     fn test_create_proposal() {
         let config = GovernanceConfig::default();
-        let mut gov = GovernanceSystem::new(config.clone(), 1_000_000_000_000_000_000_000_000);
+        // Use actual total supply from tokenomics
+        let mut gov = GovernanceSystem::new(config.clone(), TOTAL_SUPPLY);
         
         let proposer = Address::from_bytes([1u8; 20]);
-        gov.update_voting_power(proposer.clone(), 5_000_000_000_000_000_000_000);
+        // 5000 LAT voting power (5000 * 10^8)
+        gov.update_voting_power(proposer.clone(), 500_000_000_000);
         
         let proposal_id = gov.create_proposal(
             proposer,
@@ -495,15 +499,17 @@ mod tests {
     #[test]
     fn test_voting() {
         let config = GovernanceConfig::default();
-        let mut gov = GovernanceSystem::new(config.clone(), 1_000_000_000_000_000_000_000_000);
+        // Use actual total supply from tokenomics
+        let mut gov = GovernanceSystem::new(config.clone(), TOTAL_SUPPLY);
         
         let proposer = Address::from_bytes([1u8; 20]);
         let voter1 = Address::from_bytes([2u8; 20]);
         let voter2 = Address::from_bytes([3u8; 20]);
         
-        gov.update_voting_power(proposer.clone(), 5_000_000_000_000_000_000_000);
-        gov.update_voting_power(voter1.clone(), 3_000_000_000_000_000_000_000);
-        gov.update_voting_power(voter2.clone(), 2_000_000_000_000_000_000_000);
+        // Voting power in Latt (8 decimals)
+        gov.update_voting_power(proposer.clone(), 500_000_000_000);  // 5000 LAT
+        gov.update_voting_power(voter1.clone(), 300_000_000_000);    // 3000 LAT
+        gov.update_voting_power(voter2.clone(), 200_000_000_000);    // 2000 LAT
         
         let proposal_id = gov.create_proposal(
             proposer,

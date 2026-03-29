@@ -4,25 +4,26 @@ use colored::*;
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use lattice_core::{Address, Amount, BlockHeight, Hash};
+use lattice_core::tokenomics::{LATT_PER_LAT, TOKEN_SYMBOL};
 use num_format::{Locale, ToFormattedString};
 use std::time::Duration;
 
-/// Format amount in LAT with proper decimals
+/// Format amount in LAT with proper decimals (8 decimal places)
 pub fn format_amount(amount: Amount) -> String {
-    let lat = amount as f64 / 1_000_000_000_000_000_000.0;
+    let lat = amount as f64 / LATT_PER_LAT as f64;
     if lat >= 1000.0 {
-        format!("{:.2} LAT", lat)
+        format!("{:.2} {}", lat, TOKEN_SYMBOL)
     } else if lat >= 1.0 {
-        format!("{:.4} LAT", lat)
+        format!("{:.4} {}", lat, TOKEN_SYMBOL)
     } else {
-        format!("{:.8} LAT", lat)
+        format!("{:.8} {}", lat, TOKEN_SYMBOL)
     }
 }
 
 /// Format amount with color based on value
 pub fn format_amount_colored(amount: Amount) -> ColoredString {
     let formatted = format_amount(amount);
-    let lat = amount as f64 / 1_000_000_000_000_000_000.0;
+    let lat = amount as f64 / LATT_PER_LAT as f64;
     
     if lat >= 1000.0 {
         formatted.bright_green().bold()
@@ -286,12 +287,14 @@ pub fn print_command_help(command: &str, description: &str, examples: &[(&str, &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::tokenomics::LATT_PER_LAT;
 
     #[test]
     fn test_format_amount() {
-        assert_eq!(format_amount(1_000_000_000_000_000_000), "1.0000 LAT");
-        assert_eq!(format_amount(1_500_000_000_000_000_000), "1.5000 LAT");
-        assert_eq!(format_amount(1000_000_000_000_000_000_000), "1000.00 LAT");
+        // 1 LAT = 100_000_000 Latt (8 decimals)
+        assert_eq!(format_amount(LATT_PER_LAT), "1.0000 LAT");
+        assert_eq!(format_amount(LATT_PER_LAT + LATT_PER_LAT / 2), "1.5000 LAT");
+        assert_eq!(format_amount(1000 * LATT_PER_LAT), "1000.00 LAT");
     }
 
     #[test]

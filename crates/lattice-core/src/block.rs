@@ -107,7 +107,9 @@ impl Block {
         self.transactions.iter().map(|tx| tx.fee).sum()
     }
 
-    /// Get the genesis block
+    /// Get the genesis block (basic version without allocations)
+    /// For production use, prefer `lattice_core::genesis::create_genesis()` which includes
+    /// the founder's initial allocation.
     pub fn genesis() -> Self {
         let header = BlockHeader {
             version: 1,

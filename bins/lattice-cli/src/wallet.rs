@@ -224,13 +224,14 @@ pub async fn show_balance(address_or_wallet: &str, rpc_url: &str) -> Result<()> 
     // Query balance
     match client.get_balance(&address).await {
         Ok(balance) => {
-            // Format balance (assuming 18 decimals like Ethereum)
-            let whole = balance / 1_000_000_000_000_000_000u128;
-            let frac = balance % 1_000_000_000_000_000_000u128;
+            // Format balance using tokenomics constants (8 decimals)
+            use lattice_core::tokenomics::{LATT_PER_LAT, TOKEN_SYMBOL};
+            let whole = balance / LATT_PER_LAT;
+            let frac = balance % LATT_PER_LAT;
 
             println!("Address: {}", address);
-            println!("Balance: {}.{:018} LAT", whole, frac);
-            println!("         ({} wei)", balance);
+            println!("Balance: {}.{:08} {}", whole, frac, TOKEN_SYMBOL);
+            println!("         ({} Latt)", balance);
         }
         Err(e) => {
             // Connection error - show helpful message

@@ -1,126 +1,165 @@
 # ⛏️ Lattice — Quantum-Resistant Blockchain
 
-**CPU-friendly mining · Post-quantum cryptography · Open source**
+<div align="center">
 
-Lattice is a quantum-resistant blockchain secured by CRYSTALS-Dilithium3 signatures and an Argon2-based memory-hard Proof-of-Work algorithm. Anyone with a regular CPU can participate.
+![Lattice Logo](https://img.shields.io/badge/⛏️-Lattice-blue?style=for-the-badge)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-green?style=flat-square)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![GitHub Release](https://img.shields.io/github/v/release/dill-lk/Lattice?style=flat-square)](https://github.com/dill-lk/Lattice/releases)
+
+**CPU-Friendly Mining · Post-Quantum Cryptography · Fair Launch**
+
+[Quick Start](#-quick-start) • [Mining](#%EF%B8%8F-mining) • [Tokenomics](#-tokenomics) • [Documentation](#-documentation)
+
+</div>
 
 ---
 
-## 🚀 Install in 60 Seconds
+## 🌟 What is Lattice?
 
-Binaries are published on the [GitHub Releases](https://github.com/dill-lk/Lattice/releases) page.
-The installer downloads the latest release automatically.
+Lattice is a **quantum-resistant blockchain** built for the future. While other cryptocurrencies will become vulnerable when quantum computers arrive, Lattice is secured by **CRYSTALS-Dilithium3** signatures — the same algorithm chosen by NIST for post-quantum security.
 
-### Linux / macOS
+### Key Features
 
+| Feature | Description |
+|---------|-------------|
+| 🔐 **Quantum-Resistant** | CRYSTALS-Dilithium3 signatures, Kyber768 key exchange |
+| ⛏️ **CPU-Friendly Mining** | Argon2 memory-hard PoW — no ASICs, no GPUs needed |
+| 🚀 **Fast Blocks** | 2-15 second block times depending on network |
+| 💰 **Fair Launch** | 95% of supply goes to miners, only 5% genesis allocation |
+| 🔓 **Open Source** | MIT/Apache-2.0 dual license |
+
+---
+
+## 🪙 Tokenomics
+
+| Parameter | Value |
+|-----------|-------|
+| **Symbol** | LAT |
+| **Total Supply** | 50,000,000 LAT |
+| **Decimals** | 8 (1 LAT = 100,000,000 Latt) |
+| **Block Reward** | 10 LAT |
+| **Genesis Allocation** | 5% (2.5M LAT with vesting) |
+| **Mining Allocation** | 95% (47.5M LAT) |
+
+### Block Times & Difficulty
+
+| Network | Block Time | Initial Difficulty | PoW Memory |
+|---------|------------|-------------------|------------|
+| **Devnet** | ~2 seconds | 1 | 512 KB |
+| **Testnet** | ~5 seconds | 5 | 4 MB |
+| **Mainnet** | ~15 seconds | 10 | 64 MB |
+
+> 💡 Lower difficulty = faster block finding. Use devnet for development!
+
+### Genesis Allocation
+
+The 5% founder allocation ensures sustainable development:
+
+- **500,000 LAT** — Immediately available (exchange listings, infrastructure)
+- **2,000,000 LAT** — 24-month linear vesting (long-term commitment)
+
+👉 See [TOKENOMICS.md](TOKENOMICS.md) for full details.
+
+---
+
+## 🚀 Quick Start
+
+### Install (60 seconds)
+
+**Linux / macOS:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dill-lk/Lattice/main/install.sh | bash
 ```
 
-> To choose a custom install directory: `bash install.sh --dir /usr/local/bin`
-> To uninstall: `bash install.sh --uninstall`
-
-### Windows (PowerShell)
-
+**Windows (PowerShell):**
 ```powershell
-# Run once if needed (allows local script execution):
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-
 irm https://raw.githubusercontent.com/dill-lk/Lattice/main/install.ps1 | iex
 ```
 
-> Custom directory: `.\install.ps1 -InstallDir "C:\Lattice"`
-> Uninstall: `.\install.ps1 -Uninstall`
-
-The installer places three binaries on your `PATH`:
+This installs three binaries:
 
 | Binary | Purpose |
 |--------|---------|
-| `lattice-node` | Full blockchain node + built-in miner |
-| `lattice-cli` | Wallet management & RPC queries |
-| `lattice-miner` | Standalone multi-threaded miner |
+| `lattice-node` | Full node (syncs blockchain, serves RPC) |
+| `lattice-miner` | Standalone CPU miner |
+| `lattice-cli` | Wallet & command-line tools |
 
----
-
-## ⚙️ Setup: Three Steps
-
-### 1 — Create a Wallet
+### Create Wallet
 
 ```bash
 lattice-cli wallet create
-# Saved to ./wallet.json by default
-# Note the address printed — you'll use it as your coinbase
+# Output: Address: 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft
 ```
 
-### 2 — Start the Node
+### Start Mining
 
 ```bash
-# Mainnet (default)
-lattice-node
+# Terminal 1 — Start node
+lattice-node --network devnet
 
-# With mining enabled right away (replace with your address)
-lattice-node --mine --mining-threads 4 --coinbase <your-address>
+# Terminal 2 — Start miner
+lattice-miner --coinbase <your-address> --network devnet
 ```
 
-The node starts the RPC server on `127.0.0.1:8545` and the P2P listener on `0.0.0.0:30303`.
-
-### 3 — Check Node Status
-
-```bash
-lattice-cli node status
-```
-
-Wait until the node reports it is fully synced before doing anything else.
+That's it! You're now mining LAT. 🎉
 
 ---
 
 ## ⛏️ Mining
 
-### Option A — Built-in miner (simplest)
+### Network Selection
 
-Pass `--mine` directly to `lattice-node`:
-
-```bash
-lattice-node \
-  --mine \
-  --mining-threads 4 \
-  --coinbase <your-address>
-```
-
-### Option B — Standalone miner (recommended for performance)
-
-Run the node and the miner in separate terminals:
+Choose your network based on your needs:
 
 ```bash
-# Terminal 1 — node
-lattice-node
+# Development (instant blocks, ~2 sec)
+lattice-node --network devnet
+lattice-miner --coinbase <addr> --network devnet
 
-# Terminal 2 — miner (connects to node via RPC)
-lattice-miner --threads 4 --coinbase <your-address>
+# Testing (moderate speed, ~5 sec)
+lattice-node --network testnet
+lattice-miner --coinbase <addr> --network testnet
+
+# Production (full security, ~15 sec)
+lattice-node --network mainnet
+lattice-miner --coinbase <addr> --network mainnet
 ```
 
-### Mining thread recommendation
+### Thread Recommendations
 
-| CPU cores | Recommended `--threads` |
-|-----------|------------------------|
+| CPU Cores | Recommended Threads |
+|-----------|---------------------|
 | 2 | 2 |
-| 4 | 3–4 |
-| 8 | 6–8 |
-| 16+ | 12–16 |
+| 4 | 3-4 |
+| 8 | 6-8 |
+| 16+ | 12-16 |
+
+```bash
+lattice-miner --coinbase <addr> --threads 8 --network devnet
+```
+
+### Mining Display
+
+The miner shows real-time stats:
+
+```
+╔═══════════════════════════════════════════════════════════╗
+║                 ⛏  LATTICE MINER  v0.1.0                  ║
+╠═══════════════════════════════════════════════════════════╣
+║  Network : DEVNET                                         ║
+║  Threads : 8                                              ║
+║  Coinbase: 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft             ║
+║  Node RPC: http://127.0.0.1:8545                          ║
+╚═══════════════════════════════════════════════════════════╝
+
+ ⛏  #42  │  125.3 H/s  (avg 118.7 H/s)  │  1,247 hashes  │  3 found  │  up 2m
+```
 
 ---
 
-## 💵 Block Rewards
-
-| Parameter | Value |
-|-----------|-------|
-| Reward per block | 10 LAT |
-| Target block time | ~15 seconds |
-| Daily emission | ~57,600 LAT |
-
----
-
-## 📖 Wallet Commands
+## 💵 Wallet Commands
 
 ```bash
 # Create new wallet
@@ -129,57 +168,89 @@ lattice-cli wallet create
 # Show your address
 lattice-cli wallet address
 
-# Check balance (requires node running)
-lattice-cli wallet balance <address>
+# Check balance
+lattice-cli wallet balance
 
-# Export private key
+# Send LAT
+lattice-cli tx send --to <address> --amount 10.5
+
+# Export private key (⚠️ keep safe!)
 lattice-cli wallet export
-
-# Send tokens
-lattice-cli tx send --to <address> --amount 1.5
 ```
 
 ---
 
-## ⚙️ System Requirements
+## 🖥️ System Requirements
 
-| Tier | CPU | RAM | Disk |
-|------|-----|-----|------|
-| Minimum | 2 cores | 4 GB | 20 GB |
-| Recommended | 4+ cores | 8 GB | 50 GB SSD |
-| Optimal | 8+ cores | 16 GB | 100 GB SSD |
+| Tier | CPU | RAM | Disk | Expected Hash Rate |
+|------|-----|-----|------|-------------------|
+| **Minimum** | 2 cores | 4 GB | 20 GB | ~10 H/s |
+| **Recommended** | 4+ cores | 8 GB | 50 GB SSD | ~50 H/s |
+| **Optimal** | 8+ cores | 16 GB | 100 GB SSD | ~150+ H/s |
+
+> 💡 Lattice uses Argon2 memory-hard PoW. More RAM = better performance.
 
 ---
 
-## 🔐 Wallet Backup
+## 🔐 Security
 
-Your wallet is at `./wallet.json` (or the path you specified at creation).
+### Backup Your Wallet
 
 ```bash
-# Backup (Linux/macOS)
-cp wallet.json ~/wallet-backup-$(date +%Y%m%d).json
-chmod 600 ~/wallet-backup-*.json
+# Your wallet is at ~/.lattice/wallet.json (or ./wallet.json)
+cp wallet.json ~/backup/wallet-$(date +%Y%m%d).json
 ```
 
-**⚠️ If you lose your wallet file and password, your LAT is gone forever. Back it up.**
+**⚠️ WARNING:** If you lose your wallet file and password, your LAT is **gone forever**.
+
+### Post-Quantum Cryptography
+
+Lattice uses algorithms selected by NIST for post-quantum security:
+
+| Component | Algorithm | Security Level |
+|-----------|-----------|----------------|
+| Signatures | CRYSTALS-Dilithium3 | NIST Level 3 |
+| Key Exchange | Kyber768 | NIST Level 3 |
+| Hashing | SHA3-256 | 256-bit |
+| PoW | Argon2id | Memory-hard |
 
 ---
 
 ## 🆘 Troubleshooting
 
-| Problem | Fix |
-|---------|-----|
-| Node won't start | Check port 30303 isn't already in use |
-| Miner shows RPC error | Make sure `lattice-node` is running first |
-| Invalid coinbase address | Address must be from `lattice-cli wallet address`, not a Bitcoin address |
-| No peers | Open port 30303 TCP in your firewall |
+| Problem | Solution |
+|---------|----------|
+| Node won't start | Check port 30303 isn't in use |
+| Miner shows 0.00 H/s | Use `--network devnet` for faster hashes |
+| RPC connection error | Make sure `lattice-node` is running |
+| Invalid coinbase address | Use address from `lattice-cli wallet address` |
 | Low hashrate | Increase `--threads`, close background apps |
+| Old chain data | Delete data directory and restart (see below) |
+
+### Reset Chain Data
+
+If you need to start fresh (e.g., after updating difficulty settings):
+
+**Windows:**
+```powershell
+Remove-Item -Recurse $env:LOCALAPPDATA\Lattice
+```
+
+**Linux/macOS:**
+```bash
+rm -rf ~/.local/share/lattice
+```
+
+### Node Commands
 
 ```bash
-# Diagnose connectivity
+# Check node status
+lattice-cli node status
+
+# View peers
 lattice-cli node peers
 
-# Open P2P port (Ubuntu)
+# Open firewall (Linux)
 sudo ufw allow 30303/tcp
 ```
 
@@ -187,44 +258,89 @@ sudo ufw allow 30303/tcp
 
 ## 📚 Documentation
 
-| Document | Contents |
-|----------|---------|
-| [ADMIN.md](ADMIN.md) | Full operator guide — hosting a node, systemd service, advanced config |
-| [MINING_GUIDE.md](MINING_GUIDE.md) | In-depth mining optimisation |
+| Document | Description |
+|----------|-------------|
+| [TOKENOMICS.md](TOKENOMICS.md) | Token supply, genesis allocation, vesting |
+| [MINING_GUIDE.md](MINING_GUIDE.md) | In-depth mining optimization |
+| [ADMIN.md](ADMIN.md) | Full operator guide, systemd setup |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Docker & production deployment |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | How to build from source and contribute |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Build from source, contribute |
 | [docs/api-reference.md](docs/api-reference.md) | JSON-RPC API reference |
 
 ---
 
-## 📝 For Developers
+## 🛠️ Build from Source
 
 ```bash
-# Build from source (requires Rust 1.75+ and RocksDB dev libraries)
+# Requirements: Rust 1.75+, C++ compiler (for RocksDB)
+
 git clone https://github.com/dill-lk/Lattice.git
 cd Lattice
+
+# Build
 cargo build --release
 
-# Run tests
-cargo test
+# Test
+cargo test --workspace
 
-# Lint
-cargo clippy --all -- -D warnings
+# Install locally
+cargo install --path bins/lattice-node
+cargo install --path bins/lattice-miner
+cargo install --path bins/lattice-cli
 ```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development setup guide.
 
 ---
 
-## 💬 Community & Support
+## 🏗️ Architecture
 
-- **GitHub Issues:** https://github.com/dill-lk/Lattice/issues
-- **Releases:** https://github.com/dill-lk/Lattice/releases
-- **Source:** https://github.com/dill-lk/Lattice
+```
+┌─────────────────┐
+│   lattice-node  │ ← Full node binary
+└────────┬────────┘
+         │
+    ┌────┴────┬─────────────┐
+    │         │             │
+    ▼         ▼             ▼
+┌───────┐ ┌───────┐ ┌───────────┐
+│Network│ │  RPC  │ │ Consensus │
+└───┬───┘ └───┬───┘ └─────┬─────┘
+    │         │           │
+    └────┬────┴───────────┘
+         │
+    ┌────┴────┐
+    │ Storage │ ← RocksDB
+    └────┬────┘
+         │
+    ┌────┴────┐
+    │  Core   │ ← Blocks, Transactions, State
+    └────┬────┘
+         │
+    ┌────┴────┐
+    │ Crypto  │ ← Dilithium, Kyber, SHA3
+    └─────────┘
+```
+
+---
+
+## 💬 Community
+
+- **GitHub Issues:** [Report bugs & request features](https://github.com/dill-lk/Lattice/issues)
+- **Releases:** [Download latest](https://github.com/dill-lk/Lattice/releases)
+- **Source Code:** [github.com/dill-lk/Lattice](https://github.com/dill-lk/Lattice)
 
 ---
 
 ## 📄 License
 
-MIT OR Apache-2.0
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
+
+---
+
+<div align="center">
+
+**Built with ❤️ for the post-quantum future**
+
+⭐ Star this repo if you find it useful!
+
+</div>
 

@@ -210,9 +210,7 @@ impl VestingSchedule {
             self.total_amount
         } else {
             // Linear vesting: (elapsed / duration) * total
-            let vested = (self.total_amount * elapsed as u128) 
-                / self.duration_blocks as u128;
-            vested
+            (self.total_amount * elapsed as u128) / self.duration_blocks as u128
         }
     }
     

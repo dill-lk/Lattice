@@ -243,15 +243,25 @@ async fn run_miner(
 
     let coinbase = match &config.coinbase {
         Some(addr) => {
-            match hex::decode(addr.trim_start_matches("0x")) {
-                Ok(bytes) if bytes.len() == 20 => {
-                    let mut arr = [0u8; 20];
-                    arr.copy_from_slice(&bytes);
-                    Address::from_bytes(arr)
-                }
-                _ => {
-                    tracing::error!("Invalid coinbase address: {}", addr);
-                    return;
+            // Accept Base58Check format (output of `lattice-cli wallet address`)
+            // or hex format (0x-prefixed or plain 40-char hex).
+            if let Ok(a) = Address::from_base58(addr) {
+                a
+            } else {
+                match hex::decode(addr.trim_start_matches("0x")) {
+                    Ok(bytes) if bytes.len() == 20 => {
+                        let mut arr = [0u8; 20];
+                        arr.copy_from_slice(&bytes);
+                        Address::from_bytes(arr)
+                    }
+                    _ => {
+                        tracing::error!(
+                            "Invalid coinbase address: {}. \
+                             Use the address shown by `lattice-cli wallet address`.",
+                            addr
+                        );
+                        return;
+                    }
                 }
             }
         }
@@ -261,8 +271,8 @@ async fn run_miner(
         }
     };
 
-    tracing::info!("Miner started with {} threads, coinbase: 0x{}", 
-        config.threads, hex::encode(coinbase.as_bytes()));
+    tracing::info!("Miner started with {} threads, coinbase: {}",
+        config.threads, coinbase);
 
     let miner = MinerBuilder::new()
         .threads(config.threads)

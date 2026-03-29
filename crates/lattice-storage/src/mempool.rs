@@ -56,9 +56,11 @@ impl PartialOrd for TxEntry {
 impl Ord for TxEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Higher fee per gas = higher priority
+        // For equal fee per gas, prefer higher absolute fee
         // For equal fees, prefer older transactions (FIFO)
         self.fee_per_gas
             .cmp(&other.fee_per_gas)
+            .then_with(|| self.fee.cmp(&other.fee))
             .then_with(|| other.inserted_at.cmp(&self.inserted_at))
     }
 }

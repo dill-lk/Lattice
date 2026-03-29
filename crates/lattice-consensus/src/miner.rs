@@ -113,7 +113,11 @@ impl Miner {
         start_nonce: u64,
         end_nonce: u64,
     ) -> Result<MiningResult, PoWError> {
-        // Reset state
+        // If already cancelled (e.g. cancel() called before mine_range), return immediately
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Ok(MiningResult::Cancelled);
+        }
+        // Reset cancellation state for this new mining attempt
         self.cancelled.store(false, Ordering::SeqCst);
         let start_time = Instant::now();
         let hash_count = Arc::new(AtomicU64::new(0));

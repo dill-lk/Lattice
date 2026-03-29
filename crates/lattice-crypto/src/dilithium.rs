@@ -13,10 +13,10 @@ use crate::{CryptoError, Result};
 pub const PUBLIC_KEY_SIZE: usize = 1952;
 
 /// Size of a Dilithium3 secret key in bytes
-pub const SECRET_KEY_SIZE: usize = 4016;
+pub const SECRET_KEY_SIZE: usize = 4032;
 
 /// Size of a Dilithium3 signature in bytes
-pub const SIGNATURE_SIZE: usize = 3293;
+pub const SIGNATURE_SIZE: usize = 3309;
 
 /// Dilithium public key for signature verification
 #[derive(Clone, PartialEq)]
@@ -331,7 +331,6 @@ mod tests {
     #[test]
     fn test_keypair_generation() {
         let keypair = Keypair::generate();
-        eprintln!("ACTUAL_PK={} ACTUAL_SK={}", keypair.public.len(), keypair.secret.len());
         assert_eq!(keypair.public.len(), PUBLIC_KEY_SIZE);
         assert_eq!(keypair.secret.len(), SECRET_KEY_SIZE);
     }
@@ -342,7 +341,6 @@ mod tests {
         let message = b"Hello, quantum-resistant world!";
         
         let signature = keypair.sign(message);
-        eprintln!("ACTUAL_SIG_LEN={}", signature.len());
         assert!(keypair.verify(message, &signature));
         assert!(signature.is_valid_length());
     }

@@ -14,7 +14,7 @@ pub struct MerkleMountainRange {
     peaks: Vec<Hash>,
     /// Total number of leaves added
     size: u64,
-    /// All nodes (for proof generation)
+    /// All leaf hashes (stored as `nodes` for serialization compatibility)
     nodes: Vec<Hash>,
 }
 
@@ -32,37 +32,12 @@ impl MerkleMountainRange {
     pub fn append(&mut self, leaf_hash: Hash) {
         self.nodes.push(leaf_hash);
         self.size += 1;
-        
-        let mut current = leaf_hash;
-        let mut height = 0u32;
-        
-        // Merge peaks as needed
-        while let Some(peak) = self.find_peak_to_merge(height) {
-            let merged = hash_pair(&peak, &current);
-            self.nodes.push(merged);
-            current = merged;
-            height += 1;
-        }
-        
         self.rebuild_peaks();
     }
 
     /// Get the root hash (bagging all peaks)
     pub fn root(&self) -> Hash {
-        if self.peaks.is_empty() {
-            return [0u8; 32];
-        }
-        
-        if self.peaks.len() == 1 {
-            return self.peaks[0];
-        }
-        
-        // Bag all peaks together
-        let mut result = self.peaks[0];
-        for peak in &self.peaks[1..] {
-            result = hash_pair(&result, peak);
-        }
-        result
+        self.bag_peaks(&self.peaks)
     }
 
     /// Get size of MMR
@@ -75,45 +50,23 @@ impl MerkleMountainRange {
         if pos >= self.size {
             return None;
         }
-        
-        let mut proof_hashes = Vec::new();
-        let mut positions = Vec::new();
-        
+
         let leaf_index = pos as usize;
-        let mut current_pos = self.leaf_index_to_mmr_index(leaf_index);
-        let mut current_height = 0u32;
-        
-        // Collect sibling hashes up to peak
-        loop {
-            let sibling_pos = self.get_sibling_pos(current_pos, current_height);
-            
-            if let Some(sib_pos) = sibling_pos {
-                if sib_pos < self.nodes.len() {
-                    proof_hashes.push(self.nodes[sib_pos]);
-                    positions.push(sib_pos as u64);
-                } else {
-                    break;
-                }
-                
-                let parent_pos = self.get_parent_pos(current_pos, current_height);
-                if parent_pos >= self.nodes.len() {
-                    break;
-                }
-                
-                current_pos = parent_pos;
-                current_height += 1;
-            } else {
-                break;
-            }
-        }
-        
-        // Add peak bagging proof
-        let peak_proof = self.generate_peak_bagging_proof(current_pos);
-        
+        let n = self.size as usize;
+
+        let (peak_idx, tree_start, tree_size) = Self::find_peak_for_leaf(n, leaf_index)?;
+
+        let mut sibling_hashes = Vec::new();
+        Self::collect_proof(
+            &self.nodes[tree_start..tree_start + tree_size],
+            leaf_index - tree_start,
+            &mut sibling_hashes,
+        );
+
         Some(MmrProof {
             leaf_index: pos,
-            sibling_hashes: proof_hashes,
-            peak_hashes: peak_proof,
+            sibling_hashes,
+            peak_hashes: self.peaks.clone(),
             mmr_size: self.size,
         })
     }
@@ -123,26 +76,28 @@ impl MerkleMountainRange {
         if proof.leaf_index >= self.size {
             return false;
         }
-        
-        // Compute root from leaf + siblings
-        let mut current = *leaf_hash;
-        let mut height = 0u32;
-        let mut pos = self.leaf_index_to_mmr_index(proof.leaf_index as usize);
-        
-        for sibling in &proof.sibling_hashes {
-            let is_right = (pos / (1 << height)) % 2 == 0;
-            current = if is_right {
-                hash_pair(&current, sibling)
-            } else {
-                hash_pair(sibling, &current)
+
+        let leaf_index = proof.leaf_index as usize;
+        let n = self.size as usize;
+
+        let (peak_idx, tree_start, tree_size) =
+            match Self::find_peak_for_leaf(n, leaf_index) {
+                Some(v) => v,
+                None => return false,
             };
-            height += 1;
-            pos = self.get_parent_pos(pos, height - 1);
+
+        let local_index = leaf_index - tree_start;
+        let reconstructed_peak =
+            Self::verify_path(leaf_hash, local_index, tree_size, &proof.sibling_hashes);
+
+        if peak_idx >= proof.peak_hashes.len()
+            || reconstructed_peak != proof.peak_hashes[peak_idx]
+        {
+            return false;
         }
-        
-        // Verify against bagged peaks
-        let expected_root = self.bag_peaks(&proof.peak_hashes);
-        current == expected_root || self.root() == expected_root
+
+        // The peaks in the proof must also bag to our current root.
+        self.bag_peaks(&proof.peak_hashes) == self.root()
     }
 
     /// Get the peaks
@@ -152,96 +107,102 @@ impl MerkleMountainRange {
 
     // Internal methods
 
-    fn find_peak_to_merge(&self, height: u32) -> Option<Hash> {
-        // Check if there's a peak at this height that can be merged
-        let peak_size = 1u64 << (height + 1);
-        if self.size % peak_size == 0 && self.size > 0 {
-            // Find the peak
-            let peak_pos = self.size - peak_size;
-            let peak_mmr_index = self.leaf_index_to_mmr_index(peak_pos as usize);
-            
-            // Walk up to find peak root
-            let mut pos = peak_mmr_index;
-            for _ in 0..height {
-                pos = self.get_parent_pos(pos, 0);
-            }
-            
-            if pos < self.nodes.len() {
-                return Some(self.nodes[pos]);
-            }
-        }
-        None
-    }
-
+    /// Rebuild the peaks list from the stored leaves.
+    ///
+    /// Peaks are the roots of maximal perfect binary trees whose sizes sum to
+    /// `self.size`.  The sizes are determined by the binary representation of
+    /// `self.size`.
     fn rebuild_peaks(&mut self) {
         self.peaks.clear();
-        
-        let mut remaining = self.size;
-        let mut pos = 0usize;
-        
+        let n = self.nodes.len();
+        let mut remaining = n;
+        let mut start = 0;
+
         while remaining > 0 {
-            let peak_size = highest_power_of_two(remaining);
-            let leaves_in_peak = 1u64 << peak_size;
-            
-            // Find peak root
-            let peak_start = pos;
-            let mut peak_pos = self.leaf_index_to_mmr_index(peak_start);
-            
-            for _ in 0..peak_size {
-                peak_pos = self.get_parent_pos(peak_pos, 0);
-            }
-            
-            if peak_pos < self.nodes.len() {
-                self.peaks.push(self.nodes[peak_pos]);
-            }
-            
-            remaining -= leaves_in_peak;
-            pos += leaves_in_peak as usize;
+            // Largest power-of-two ≤ remaining
+            let height = 63 - (remaining as u64).leading_zeros();
+            let tree_size = 1usize << height;
+            self.peaks
+                .push(Self::tree_root(&self.nodes[start..start + tree_size]));
+            start += tree_size;
+            remaining -= tree_size;
         }
     }
 
-    fn leaf_index_to_mmr_index(&self, leaf_index: usize) -> usize {
-        // Convert leaf index to MMR position
-        // MMR structure: [0] [1,2] [3] [4,5,6] [7] [8,9] [10] ...
-        let mut pos = 0;
-        let mut size = 1;
-        let mut index = leaf_index;
-        
-        while index >= size {
-            pos += size * 2 - 1;
-            index -= size;
-            size *= 2;
+    /// Compute the Merkle root of a slice of leaf hashes.
+    fn tree_root(leaves: &[Hash]) -> Hash {
+        match leaves.len() {
+            0 => [0u8; 32],
+            1 => leaves[0],
+            _ => {
+                let mid = leaves.len() / 2;
+                hash_pair(
+                    &Self::tree_root(&leaves[..mid]),
+                    &Self::tree_root(&leaves[mid..]),
+                )
+            }
         }
-        
-        pos + index
     }
 
-    fn get_sibling_pos(&self, pos: usize, _height: u32) -> Option<usize> {
-        if pos == 0 {
-            return None;
+    /// Collect sibling hashes for a proof (bottom-up order: leaf-level first).
+    fn collect_proof(leaves: &[Hash], index: usize, proof: &mut Vec<Hash>) {
+        if leaves.len() <= 1 {
+            return;
         }
-        
-        if pos % 2 == 0 {
-            Some(pos - 1)
+        let mid = leaves.len() / 2;
+        if index < mid {
+            Self::collect_proof(&leaves[..mid], index, proof);
+            proof.push(Self::tree_root(&leaves[mid..]));
         } else {
-            Some(pos + 1)
+            Self::collect_proof(&leaves[mid..], index - mid, proof);
+            proof.push(Self::tree_root(&leaves[..mid]));
         }
     }
 
-    fn get_parent_pos(&self, pos: usize, _height: u32) -> usize {
-        // Parent is at position that combines two children
-        pos.div_ceil(2)
+    /// Reconstruct the peak hash from a leaf and its sibling proof path.
+    fn verify_path(
+        leaf_hash: &Hash,
+        mut index: usize,
+        mut tree_size: usize,
+        proof: &[Hash],
+    ) -> Hash {
+        let mut current = *leaf_hash;
+        for sibling in proof {
+            tree_size /= 2;
+            if index < tree_size {
+                current = hash_pair(&current, sibling);
+            } else {
+                index -= tree_size;
+                current = hash_pair(sibling, &current);
+            }
+        }
+        current
     }
 
-    fn generate_peak_bagging_proof(&self, _peak_pos: usize) -> Vec<Hash> {
-        self.peaks.clone()
+    /// Return (peak_index, tree_start_leaf_index, tree_size) for a given leaf.
+    fn find_peak_for_leaf(n: usize, leaf_index: usize) -> Option<(usize, usize, usize)> {
+        let mut remaining = n;
+        let mut start = 0;
+        let mut peak_idx = 0;
+
+        while remaining > 0 {
+            let height = 63 - (remaining as u64).leading_zeros();
+            let tree_size = 1usize << height;
+            if leaf_index < start + tree_size {
+                return Some((peak_idx, start, tree_size));
+            }
+            peak_idx += 1;
+            start += tree_size;
+            remaining -= tree_size;
+        }
+        None
     }
 
     fn bag_peaks(&self, peaks: &[Hash]) -> Hash {
         if peaks.is_empty() {
             return [0u8; 32];
         }
-        
+
         let mut result = peaks[0];
         for peak in &peaks[1..] {
             result = hash_pair(&result, peak);
@@ -280,13 +241,6 @@ fn hash_pair(left: &Hash, right: &Hash) -> Hash {
     hash
 }
 
-/// Find highest power of 2 <= n
-fn highest_power_of_two(n: u64) -> u32 {
-    if n == 0 {
-        return 0;
-    }
-    63 - n.leading_zeros()
-}
 
 /// State Triangulation using MMR
 /// Allows fast state proofs and efficient state syncing

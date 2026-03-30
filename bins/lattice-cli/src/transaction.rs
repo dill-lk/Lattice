@@ -1,6 +1,7 @@
 //! Transaction command handlers
 
 use anyhow::{anyhow, Result};
+use colored::Colorize;
 use lattice_core::{Address, Transaction};
 use lattice_wallet::TransactionBuilder;
 
@@ -23,9 +24,14 @@ pub async fn send_transaction(
     let mut account = load_wallet(wallet_path)?;
     let sender_address = account.address().clone();
 
-    println!("Sending {} LAT to {}", format_amount(amount), to);
-    println!("From: {}", sender_address);
-    println!("Fee: {} LAT", format_amount(fee));
+    println!();
+    println!("  {}", "Send Transaction".bold());
+    println!("  {}", "─".repeat(50).dimmed());
+    println!();
+    println!("  {}  {}", "To".dimmed(), to.white());
+    println!("  {}  {}", "Amount".dimmed(), format!("{} LAT", format_amount(amount)).green());
+    println!("  {}  {}", "Fee".dimmed(), format!("{} LAT", format_amount(fee)).dimmed());
+    println!("  {}  {}", "From".dimmed(), sender_address.to_string().dimmed());
 
     // Create RPC client
     let client = RpcClient::new(rpc_url);
@@ -34,7 +40,7 @@ pub async fn send_transaction(
     let nonce = match client.get_transaction_count(&sender_address.to_base58()).await {
         Ok(n) => n,
         Err(_) => {
-            println!("Warning: Could not fetch nonce from network, using 0");
+            println!("  {} Could not fetch nonce, using 0", "!".yellow());
             0
         }
     };
@@ -58,19 +64,25 @@ pub async fn send_transaction(
     let tx_bytes = borsh::to_vec(&tx)?;
     let tx_hex = format!("0x{}", hex::encode(&tx_bytes));
 
-    println!("Transaction hash: 0x{}", hex::encode(tx.hash()));
+    println!();
+    println!("  {} Signing...", "●".cyan());
 
     // Send to network
     match client.send_raw_transaction(&tx_hex).await {
         Ok(hash) => {
-            println!("✓ Transaction submitted: {}", hash);
+            println!("  {} Broadcasting...", "●".cyan());
             println!();
-            println!("Use 'lattice-cli tx status {}' to check status", hash);
+            println!("  {}", "─".repeat(50).dimmed());
+            println!("  {} Transaction sent", "✓".green().bold());
+            println!();
+            println!("  {}  {}", "Hash".dimmed(), hash.white());
+            println!();
         }
         Err(e) => {
-            eprintln!("✗ Failed to submit transaction: {}", e);
-            eprintln!();
-            eprintln!("Make sure the Lattice node is running at: {}", rpc_url);
+            println!();
+            println!("  {} Failed: {}", "✗".red(), e);
+            println!("  {} {}", "Node".dimmed(), rpc_url.dimmed());
+            println!();
         }
     }
 
@@ -91,60 +103,56 @@ pub async fn check_status(hash: &str, rpc_url: &str) -> Result<()> {
     // Try to get transaction
     match client.get_transaction(&hash).await {
         Ok(Some(tx)) => {
-            println!("Transaction: {}", hash);
             println!();
+            println!("  {}", "Transaction".bold());
+            println!("  {}", "─".repeat(50).dimmed());
+            println!("  {}  {}", "Hash".dimmed(), hash.white());
 
             if let Some(block_hash) = tx.get("blockHash") {
                 if !block_hash.is_null() {
-                    println!("Status: ✓ Confirmed");
+                    println!("  {}  {}", "Status".dimmed(), "Confirmed".green());
                     if let Some(bn) = tx.get("blockNumber") {
-                        println!("Block: {}", bn.as_str().unwrap_or("unknown"));
+                        println!("  {}  #{}", "Block".dimmed(), bn.as_str().unwrap_or("?"));
                     }
                 } else {
-                    println!("Status: ⏳ Pending");
+                    println!("  {}  {}", "Status".dimmed(), "Pending".yellow());
                 }
             } else {
-                println!("Status: ⏳ Pending");
+                println!("  {}  {}", "Status".dimmed(), "Pending".yellow());
             }
 
-            println!();
-            println!("From: {}", tx.get("from").and_then(|v| v.as_str()).unwrap_or("?"));
-            println!("To: {}", tx.get("to").and_then(|v| v.as_str()).unwrap_or("?"));
+            println!("  {}  {}", "From".dimmed(), tx.get("from").and_then(|v| v.as_str()).unwrap_or("?"));
+            println!("  {}  {}", "To".dimmed(), tx.get("to").and_then(|v| v.as_str()).unwrap_or("?"));
 
             if let Some(value) = tx.get("value").and_then(|v| v.as_str()) {
                 if let Ok(amount) = parse_hex_u128(value) {
-                    println!("Value: {} LAT", format_amount(amount));
+                    println!("  {}  {} LAT", "Value".dimmed(), format_amount(amount).green());
                 }
-            }
-
-            if let Some(gas) = tx.get("gas").and_then(|v| v.as_str()) {
-                println!("Gas Limit: {}", gas);
             }
 
             // Try to get receipt for more details
             if let Ok(Some(receipt)) = client.get_transaction_receipt(&hash).await {
-                println!();
                 if let Some(status) = receipt.get("status").and_then(|v| v.as_str()) {
-                    if status == "0x1" {
-                        println!("Execution: ✓ Success");
+                    let exec_status = if status == "0x1" {
+                        "Success".green()
                     } else {
-                        println!("Execution: ✗ Failed");
-                    }
-                }
-                if let Some(gas_used) = receipt.get("gasUsed").and_then(|v| v.as_str()) {
-                    println!("Gas Used: {}", gas_used);
+                        "Failed".red()
+                    };
+                    println!("  {}  {}", "Exec".dimmed(), exec_status);
                 }
             }
+            println!();
         }
         Ok(None) => {
-            println!("Transaction not found: {}", hash);
             println!();
-            println!("The transaction may not exist or hasn't been broadcast yet.");
+            println!("  {} Transaction not found", "!".yellow());
+            println!("  {}  {}", "Hash".dimmed(), hash.dimmed());
+            println!();
         }
         Err(e) => {
-            eprintln!("Failed to query transaction: {}", e);
-            eprintln!();
-            eprintln!("Make sure the Lattice node is running at: {}", rpc_url);
+            println!();
+            println!("  {} Query failed: {}", "✗".red(), e);
+            println!();
         }
     }
 
@@ -164,37 +172,33 @@ pub fn decode_transaction(raw_tx: &str) -> Result<()> {
         borsh::from_slice(&tx_bytes).map_err(|e| anyhow!("Failed to decode transaction: {}", e))?;
 
     // Display transaction details
-    println!("Transaction Details");
-    println!("==================");
     println!();
-    println!("Hash: 0x{}", hex::encode(tx.hash()));
-    println!("Kind: {:?}", tx.kind);
-    println!("From: {}", tx.from);
-    println!("To: {}", tx.to);
-    println!("Amount: {} LAT", format_amount(tx.amount));
-    println!("Fee: {} LAT", format_amount(tx.fee));
-    println!("Nonce: {}", tx.nonce);
-    println!("Gas Limit: {}", tx.gas_limit);
-    println!("Chain ID: {}", tx.chain_id);
+    println!("  {}", "Decoded Transaction".bold());
+    println!("  {}", "─".repeat(50).dimmed());
+    println!("  {}  0x{}", "Hash".dimmed(), hex::encode(tx.hash()));
+    println!("  {}  {:?}", "Kind".dimmed(), tx.kind);
+    println!("  {}  {}", "From".dimmed(), tx.from);
+    println!("  {}  {}", "To".dimmed(), tx.to);
+    println!("  {}  {} LAT", "Amount".dimmed(), format_amount(tx.amount).green());
+    println!("  {}  {} LAT", "Fee".dimmed(), format_amount(tx.fee));
+    println!("  {}  {}", "Nonce".dimmed(), tx.nonce);
+    println!("  {}  {}", "Gas".dimmed(), tx.gas_limit);
 
     if !tx.data.is_empty() {
-        println!("Data: 0x{}", hex::encode(&tx.data));
-        println!("Data Size: {} bytes", tx.data.len());
+        println!("  {}  {} bytes", "Data".dimmed(), tx.data.len());
     }
 
-    println!();
     if tx.is_signed() {
-        println!("Signature: Present ({} bytes)", tx.signature.len());
-        println!("Public Key: Present ({} bytes)", tx.public_key.len());
-
-        if tx.verify_signature() {
-            println!("Signature Valid: ✓ Yes");
+        let sig_status = if tx.verify_signature() {
+            "Valid".green()
         } else {
-            println!("Signature Valid: ✗ No (verification failed)");
-        }
+            "Invalid".red()
+        };
+        println!("  {}  {}", "Sig".dimmed(), sig_status);
     } else {
-        println!("Signature: Not signed");
+        println!("  {}  {}", "Sig".dimmed(), "None".dimmed());
     }
+    println!();
 
     Ok(())
 }

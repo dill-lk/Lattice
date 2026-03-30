@@ -40,3 +40,4 @@ toml = "0.8"
 hex = { workspace = true }
 parking_lot = { workspace = true }
 dirs = "5.0"
+colored = "2.1"

@@ -33,13 +33,12 @@ $Binaries    = @("lattice-node.exe", "lattice-cli.exe", "lattice-miner.exe")
 # ── Helpers ───────────────────────────────────────────────────────────────────
 function Print-Header {
     Write-Host ""
-    Write-Host "╔══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║                                                          ║" -ForegroundColor Cyan
-    Write-Host "║          🚀 LATTICE BLOCKCHAIN INSTALLER 🚀             ║" -ForegroundColor Green
-    Write-Host "║                                                          ║" -ForegroundColor Cyan
-    Write-Host "║     Quantum-Resistant Blockchain · GitHub Releases      ║" -ForegroundColor Cyan
-    Write-Host "║                                                          ║" -ForegroundColor Cyan
-    Write-Host "╚══════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "   ██╗      █████╗ ████████╗████████╗██╗ ██████╗███████╗" -ForegroundColor Cyan
+    Write-Host "   ██║     ██╔══██╗╚══██╔══╝╚══██╔══╝██║██╔════╝██╔════╝" -ForegroundColor Cyan
+    Write-Host "   ██║     ███████║   ██║      ██║   ██║██║     █████╗  " -ForegroundColor Green
+    Write-Host "   ██║     ██╔══██║   ██║      ██║   ██║██║     ██╔══╝  " -ForegroundColor Green
+    Write-Host "   ███████╗██║  ██║   ██║      ██║   ██║╚██████╗███████╗" -ForegroundColor Cyan
+    Write-Host "   ╚══════╝╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚═╝ ╚═════╝╚══════╝" -ForegroundColor Cyan
     Write-Host ""
 }
 
@@ -180,7 +179,7 @@ max_peers       = 50
 
 [consensus]
 mining_threads = 0
-difficulty     = 1000000
+difficulty     = 10000
 
 [rpc]
 listen_addr = "127.0.0.1:8545"

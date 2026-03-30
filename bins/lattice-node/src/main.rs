@@ -15,13 +15,19 @@ use parking_lot::RwLock;
 use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
 
-use config::{NodeConfig, parse_network};
-use lattice_core::{Block, BlockHeader, Transaction, Address, Network, BlockHeight, Hash};
-use lattice_consensus::{MinerBuilder, MiningResult, DifficultyAdjuster, PoWConfig};
+use config::{parse_network, NodeConfig};
+use lattice_consensus::{DifficultyAdjuster, MinerBuilder, MiningResult, PoWConfig};
+use lattice_core::genesis::GenesisConfig;
+use lattice_core::tokenomics::lat_to_latt;
+use lattice_core::{Account, Address, Block, BlockHeader, BlockHeight, Hash, Network, Transaction};
 use lattice_crypto::sha3_256;
-use lattice_storage::{BlockStore, StateStore, MempoolStore};
-use lattice_rpc::{RpcServer, RpcConfig as RpcServerConfig, RpcHandlers, ChainState};
+use lattice_rpc::{ChainState, RpcConfig as RpcServerConfig, RpcHandlers, RpcServer};
+use lattice_storage::{BlockStore, MempoolStore, StateStore};
 use lattice_vm::Runtime;
+
+const MAINNET_GENESIS_DIFFICULTY: u64 = 20_000;
+const MAINNET_DYNAMIC_DIFFICULTY_START_HEIGHT: u64 = 10;
+const MAINNET_DYNAMIC_ADJUSTMENT_INTERVAL: u64 = 10;
 
 // ============================================================================
 // CLI Arguments
@@ -113,7 +119,10 @@ pub enum SyncStatus {
     /// Not syncing, fully synced
     Synced,
     /// Currently syncing
-    Syncing { current: BlockHeight, target: BlockHeight },
+    Syncing {
+        current: BlockHeight,
+        target: BlockHeight,
+    },
     /// Initial sync from genesis
     InitialSync,
 }
@@ -176,40 +185,37 @@ impl NodeState {
 
 /// Create genesis block for a network
 fn create_genesis_block(network: Network) -> Block {
-    let timestamp = match network {
-        Network::Mainnet => 1700000000000, // Mainnet launch timestamp
-        Network::Testnet => 1699000000000,
-        Network::Devnet => 0,
-    };
+    let mut config = GenesisConfig::for_network(network);
+    if matches!(network, Network::Mainnet) {
+        config.difficulty = MAINNET_GENESIS_DIFFICULTY;
+    }
 
-    let header = BlockHeader {
-        version: 1,
-        height: 0,
-        prev_hash: [0u8; 32],
-        tx_root: [0u8; 32],
-        state_root: [0u8; 32],
-        timestamp,
-        // Initial difficulty - will auto-adjust based on block times
-        // With Argon2 (64MB memory-hard), each hash takes ~1-2 seconds on CPU
-        // Start very low so mining works on regular laptops
-        difficulty: match network {
-            Network::Mainnet => 10,      // ~5-10 hashes to find block initially
-            Network::Testnet => 5,       // Easy for testing
-            Network::Devnet => 1,        // Instant for development
-        },
-        nonce: 0,
-        coinbase: Address::zero(),
-    };
-
-    Block {
-        header,
-        transactions: Vec::new(),
+    match lattice_core::genesis::create_genesis(&config) {
+        Ok(result) => result.block,
+        Err(err) => {
+            tracing::error!(error = %err, "Failed to build configured genesis, using fallback");
+            Block {
+                header: BlockHeader {
+                    version: 1,
+                    height: 0,
+                    prev_hash: [0u8; 32],
+                    tx_root: [0u8; 32],
+                    state_root: [0u8; 32],
+                    timestamp: config.timestamp,
+                    difficulty: config.difficulty.max(1),
+                    nonce: 0,
+                    coinbase: Address::zero(),
+                },
+                transactions: Vec::new(),
+            }
+        }
     }
 }
 
 /// Load genesis block or create it if not present
 fn load_or_create_genesis(
     block_store: &BlockStore,
+    state_store: &StateStore,
     network: Network,
 ) -> anyhow::Result<Block> {
     // Check if genesis exists
@@ -221,11 +227,31 @@ fn load_or_create_genesis(
     // Create genesis
     tracing::info!("Creating genesis block for {:?}", network);
     let genesis = create_genesis_block(network);
-    
-    block_store.put(&genesis)
+
+    block_store
+        .put(&genesis)
         .context("Failed to store genesis block")?;
-    
-    tracing::info!("Genesis block created: {:?}", sha3_256(&borsh::to_vec(&genesis.header)?));
+
+    // Seed genesis account allocations into persistent state so funded accounts
+    // (e.g. founder/developer genesis allocation) are available via RPC.
+    let mut config = GenesisConfig::for_network(network);
+    if matches!(network, Network::Mainnet) {
+        config.difficulty = MAINNET_GENESIS_DIFFICULTY;
+    }
+    for allocation in &config.allocations {
+        let address = Address::from_base58(&allocation.address).map_err(|_| {
+            anyhow::anyhow!("Invalid genesis allocation address: {}", allocation.address)
+        })?;
+        let balance = lat_to_latt(allocation.balance_lat);
+        state_store
+            .set_account(&address, &Account::with_balance(balance))
+            .context("Failed to seed genesis allocation into state store")?;
+    }
+
+    tracing::info!(
+        "Genesis block created: {:?}",
+        sha3_256(&borsh::to_vec(&genesis.header)?)
+    );
     Ok(genesis)
 }
 
@@ -274,12 +300,13 @@ async fn run_miner(
         }
     };
 
-    tracing::info!("Miner started with {} threads, coinbase: {}",
-        config.threads, coinbase);
+    tracing::info!(
+        "Miner started with {} threads, coinbase: {}",
+        config.threads,
+        coinbase
+    );
 
-    let miner = MinerBuilder::new()
-        .threads(config.threads)
-        .build();
+    let miner = MinerBuilder::new().threads(config.threads).build();
 
     loop {
         // Check for shutdown
@@ -306,23 +333,20 @@ async fn run_miner(
 
         // Mine the block
         tracing::debug!("Mining block at height {}", template.header.height);
-        
+
         let result = tokio::task::spawn_blocking({
             let miner = miner.clone();
             let header = template.header.clone();
             move || miner.mine(&header)
-        }).await;
+        })
+        .await;
 
         match result {
             Ok(Ok(MiningResult::Found { nonce, hash })) => {
                 let mut block = template;
                 block.header.nonce = nonce;
 
-                tracing::info!(
-                    "⛏ Mined block {} with hash {:?}",
-                    block.header.height,
-                    hash
-                );
+                tracing::info!("⛏ Mined block {} with hash {:?}", block.header.height, hash);
 
                 // Store and broadcast
                 if let Err(e) = state.block_store.put(&block) {
@@ -352,10 +376,7 @@ async fn run_miner(
 }
 
 /// Build a block template for mining
-async fn build_block_template(
-    state: &NodeState,
-    coinbase: Address,
-) -> anyhow::Result<Block> {
+async fn build_block_template(state: &NodeState, coinbase: Address) -> anyhow::Result<Block> {
     let parent_height = state.height();
     let parent_hash = state.tip();
 
@@ -363,25 +384,70 @@ async fn build_block_template(
     let txs = state.mempool.get_sorted_by_fee(1000)?;
 
     // Compute tx_root
-    let tx_hashes: Vec<&[u8]> = txs.iter()
-        .map(|tx| tx.data.as_slice())
-        .collect();
+    let tx_hashes: Vec<&[u8]> = txs.iter().map(|tx| tx.data.as_slice()).collect();
     let tx_root = if tx_hashes.is_empty() {
         [0u8; 32]
     } else {
         sha3_256(&tx_hashes.concat())
     };
 
-    // Get current difficulty from latest block, or use network default
-    let difficulty = state.block_store.get_latest()
-        .ok()
-        .flatten()
-        .map(|b| b.header.difficulty)
-        .unwrap_or(match state.network {
-            Network::Mainnet => 10,      // Low initial difficulty for CPU mining
-            Network::Testnet => 5,
-            Network::Devnet => 1,
-        });
+    // Get difficulty using bootstrap + dynamic adjustment policy.
+    let difficulty = match state.network {
+        Network::Mainnet => {
+            let next_height = parent_height + 1;
+
+            // Bootstrap: fixed difficulty for first few blocks so the chain starts reliably.
+            if next_height <= MAINNET_DYNAMIC_DIFFICULTY_START_HEIGHT {
+                MAINNET_GENESIS_DIFFICULTY
+            } else {
+                let latest = state
+                    .block_store
+                    .get_latest()
+                    .ok()
+                    .flatten()
+                    .map(|b| b.header.difficulty)
+                    .unwrap_or(MAINNET_GENESIS_DIFFICULTY);
+
+                // After bootstrap, retarget every interval based on recent block times.
+                if parent_height != 0
+                    && parent_height.is_multiple_of(MAINNET_DYNAMIC_ADJUSTMENT_INTERVAL)
+                {
+                    let start_height = parent_height
+                        .saturating_sub(MAINNET_DYNAMIC_ADJUSTMENT_INTERVAL)
+                        .saturating_add(1);
+
+                    let mut blocks =
+                        Vec::with_capacity(MAINNET_DYNAMIC_ADJUSTMENT_INTERVAL as usize);
+                    for h in start_height..=parent_height {
+                        if let Ok(Some(block)) = state.block_store.get_by_height(h) {
+                            blocks.push(block);
+                        }
+                    }
+
+                    state
+                        .difficulty
+                        .adjust_from_blocks(&blocks)
+                        .unwrap_or(latest)
+                } else {
+                    latest
+                }
+            }
+        }
+        Network::Testnet => state
+            .block_store
+            .get_latest()
+            .ok()
+            .flatten()
+            .map(|b| b.header.difficulty)
+            .unwrap_or(5),
+        Network::Devnet => state
+            .block_store
+            .get_latest()
+            .ok()
+            .flatten()
+            .map(|b| b.header.difficulty)
+            .unwrap_or(1),
+    };
 
     let header = BlockHeader {
         version: 1,
@@ -422,7 +488,7 @@ async fn run_event_loop(
                 tracing::info!("Event loop received shutdown signal");
                 break;
             }
-            
+
             // Handle node events
             event = event_rx.recv() => {
                 match event {
@@ -478,7 +544,7 @@ async fn run_event_loop(
 /// Handle a new block received from network
 async fn handle_new_block(state: &NodeState, block: &Block) {
     let block_hash = sha3_256(&borsh::to_vec(&block.header).unwrap_or_default());
-    
+
     tracing::debug!(
         "Processing block {} hash={:?}",
         block.header.height,
@@ -501,7 +567,7 @@ async fn handle_new_block(state: &NodeState, block: &Block) {
     if block.header.height > state.height() {
         state.update_tip(block.header.height, block_hash);
         tracing::info!("Chain tip updated to height {}", block.header.height);
-        
+
         // Execute transactions and update state
         for tx in &block.transactions {
             if let Err(e) = execute_transaction(state, tx) {
@@ -518,8 +584,11 @@ fn validate_block(state: &NodeState, block: &Block) -> anyhow::Result<()> {
     if block.header.height != expected_height && block.header.height != 0 {
         // Allow orphan blocks for reorg handling
         if block.header.height <= state.height() {
-            anyhow::bail!("Block height {} <= current height {}", 
-                block.header.height, state.height());
+            anyhow::bail!(
+                "Block height {} <= current height {}",
+                block.header.height,
+                state.height()
+            );
         }
     }
 
@@ -530,9 +599,7 @@ fn validate_block(state: &NodeState, block: &Block) -> anyhow::Result<()> {
     }
 
     // Verify PoW
-    if !lattice_consensus::verify_pow(&block.header, &PoWConfig::default())
-        .unwrap_or(false)
-    {
+    if !lattice_consensus::verify_pow(&block.header, &PoWConfig::default()).unwrap_or(false) {
         anyhow::bail!("Invalid proof of work");
     }
 
@@ -542,7 +609,7 @@ fn validate_block(state: &NodeState, block: &Block) -> anyhow::Result<()> {
 /// Handle a new transaction from network or RPC
 async fn handle_new_transaction(state: &NodeState, tx: &Transaction) {
     let tx_hash = sha3_256(&borsh::to_vec(tx).unwrap_or_default());
-    
+
     tracing::debug!("Processing transaction {:?}", tx_hash);
 
     // Basic validation
@@ -580,7 +647,9 @@ fn execute_transaction(_state: &NodeState, tx: &Transaction) -> anyhow::Result<(
             // In a real implementation, this would use state_store
             tracing::debug!(
                 "Transfer: {:?} -> {:?}, amount: {}",
-                tx.from, tx.to, tx.amount
+                tx.from,
+                tx.to,
+                tx.amount
             );
         }
         lattice_core::TransactionKind::Deploy => {
@@ -602,10 +671,7 @@ fn execute_transaction(_state: &NodeState, tx: &Transaction) -> anyhow::Result<(
 // ============================================================================
 
 /// Start the RPC server
-async fn start_rpc_server(
-    config: config::RpcConfig,
-    state: Arc<NodeState>,
-) -> anyhow::Result<()> {
+async fn start_rpc_server(config: config::RpcConfig, state: Arc<NodeState>) -> anyhow::Result<()> {
     if !config.enabled {
         tracing::info!("RPC server disabled");
         return Ok(());
@@ -619,7 +685,7 @@ async fn start_rpc_server(
 
     // Create chain state from node state
     let chain_state = create_chain_state(&state)?;
-    
+
     let handlers = RpcHandlers::with_state(Arc::new(RwLock::new(chain_state)));
     let server = RpcServer::with_handlers(rpc_config, handlers);
 
@@ -648,13 +714,24 @@ fn create_chain_state(state: &NodeState) -> anyhow::Result<ChainState> {
             // Index transactions
             for tx in &block.transactions {
                 let tx_hash = sha3_256(&borsh::to_vec(tx).unwrap_or_default());
-                chain_state.transactions.insert(tx_hash, (tx.clone(), Some(hash)));
+                chain_state
+                    .transactions
+                    .insert(tx_hash, (tx.clone(), Some(hash)));
             }
             if block.header.height > chain_state.height {
                 chain_state.height = block.header.height;
             }
-            chain_state.blocks_by_height.insert(block.header.height, block.clone());
+            chain_state
+                .blocks_by_height
+                .insert(block.header.height, block.clone());
             chain_state.blocks_by_hash.insert(hash, block);
+        }
+    }
+
+    // Expose seeded founder/developer genesis balance through RPC state.
+    if let Ok(founder) = Address::from_base58(lattice_core::tokenomics::FOUNDER_WALLET_ADDRESS) {
+        if let Ok(Some(account)) = state.state_store.get_account(&founder) {
+            chain_state.balances.insert(founder, account.balance);
         }
     }
 
@@ -672,21 +749,21 @@ async fn start_networking(
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     tracing::info!("Starting P2P networking on {}", config.listen_addr);
-    
+
     // In a full implementation, this would:
     // 1. Create libp2p swarm with NetworkBehavior
     // 2. Connect to bootnodes
     // 3. Start gossipsub for block/tx propagation
     // 4. Handle sync requests
-    
+
     // Placeholder: just log and wait for shutdown
     tokio::spawn(async move {
         tracing::info!("P2P network placeholder running");
-        
+
         // Simulate peer discovery
         tokio::time::sleep(Duration::from_secs(2)).await;
         state.emit_event(NodeEvent::SyncStatusChanged(SyncStatus::Synced));
-        
+
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
@@ -708,25 +785,22 @@ async fn start_networking(
 // ============================================================================
 
 /// Perform graceful shutdown of all components
-async fn graceful_shutdown(
-    state: Arc<NodeState>,
-    shutdown_tx: broadcast::Sender<()>,
-) {
+async fn graceful_shutdown(state: Arc<NodeState>, shutdown_tx: broadcast::Sender<()>) {
     tracing::info!("Initiating graceful shutdown...");
-    
+
     // Signal all components to stop
     let _ = shutdown_tx.send(());
-    
+
     // Emit shutdown event
     state.emit_event(NodeEvent::Shutdown);
-    
+
     // Give components time to cleanup
     tokio::time::sleep(Duration::from_millis(500)).await;
-    
+
     // Flush storage
     tracing::info!("Flushing storage...");
     // block_store, state_store, mempool will flush on drop
-    
+
     tracing::info!("Shutdown complete");
 }
 
@@ -791,8 +865,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Initialize logging
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
         .with_target(true)
@@ -803,26 +877,21 @@ async fn main() -> anyhow::Result<()> {
     print_banner(&config);
 
     // Create data directories
-    config.ensure_data_dir()
+    config
+        .ensure_data_dir()
         .context("Failed to create data directories")?;
 
     // Initialize storage
     tracing::info!("Opening storage...");
-    let block_store = Arc::new(
-        BlockStore::open(config.blocks_db_path())
-            .context("Failed to open block store")?
-    );
-    let state_store = Arc::new(
-        StateStore::open(config.state_db_path())
-            .context("Failed to open state store")?
-    );
-    let mempool = Arc::new(
-        MempoolStore::open(config.mempool_db_path())
-            .context("Failed to open mempool")?
-    );
+    let block_store =
+        Arc::new(BlockStore::open(config.blocks_db_path()).context("Failed to open block store")?);
+    let state_store =
+        Arc::new(StateStore::open(config.state_db_path()).context("Failed to open state store")?);
+    let mempool =
+        Arc::new(MempoolStore::open(config.mempool_db_path()).context("Failed to open mempool")?);
 
     // Load or create genesis
-    let genesis = load_or_create_genesis(&block_store, config.network)?;
+    let genesis = load_or_create_genesis(&block_store, &state_store, config.network)?;
     let genesis_hash = sha3_256(&borsh::to_vec(&genesis.header)?);
 
     // Get current chain tip
@@ -850,7 +919,14 @@ async fn main() -> anyhow::Result<()> {
         chain_height: RwLock::new(chain_height),
         chain_tip: RwLock::new(chain_tip),
         sync_status: RwLock::new(SyncStatus::InitialSync),
-        difficulty: Arc::new(DifficultyAdjuster::new()),
+        difficulty: Arc::new(match config.network {
+            Network::Mainnet => DifficultyAdjuster::with_params(
+                lattice_consensus::TARGET_BLOCK_TIME_MS,
+                MAINNET_DYNAMIC_ADJUSTMENT_INTERVAL,
+                lattice_consensus::MAX_ADJUSTMENT_FACTOR,
+            ),
+            _ => DifficultyAdjuster::new(),
+        }),
         vm_runtime: Arc::new(Runtime::new()),
         event_tx: event_tx.clone(),
     });
@@ -863,11 +939,7 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // Start P2P networking
-    start_networking(
-        config.p2p.clone(),
-        state.clone(),
-        shutdown_tx.subscribe(),
-    ).await?;
+    start_networking(config.p2p.clone(), state.clone(), shutdown_tx.subscribe()).await?;
 
     // Start RPC server
     start_rpc_server(config.rpc.clone(), state.clone()).await?;
@@ -925,7 +997,10 @@ fn print_banner(config: &NodeConfig) {
         tracing::info!("  RPC:            disabled");
     }
     if config.mining.enabled {
-        tracing::info!("  Mining:         enabled ({} threads)", config.mining.threads);
+        tracing::info!(
+            "  Mining:         enabled ({} threads)",
+            config.mining.threads
+        );
         if let Some(coinbase) = &config.mining.coinbase {
             tracing::info!("  Coinbase:       {}", coinbase);
         }

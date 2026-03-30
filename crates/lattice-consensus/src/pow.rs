@@ -21,6 +21,32 @@ pub enum PoWError {
 
 pub type Result<T> = std::result::Result<T, PoWError>;
 
+/// Precomputed PoW context reused across nonce attempts.
+#[derive(Debug)]
+pub(crate) struct PreparedPow {
+    argon2: Argon2<'static>,
+    header_bytes: Vec<u8>,
+    salt: [u8; 16],
+}
+
+impl PreparedPow {
+    /// Compute a PoW hash for a nonce using the precomputed context.
+    pub(crate) fn compute_hash(&self, nonce: u64) -> Result<Hash> {
+        // Input: header_bytes || nonce
+        let mut input = self.header_bytes.clone();
+        input.extend_from_slice(&nonce.to_le_bytes());
+
+        let mut output = [0u8; 32];
+        self.argon2
+            .hash_password_into(&input, &self.salt, &mut output)
+            .map_err(|e| PoWError::Argon2Error(e.to_string()))?;
+
+        let final_hash = Sha3_256::digest(output);
+        let mut result = [0u8; 32];
+        result.copy_from_slice(&final_hash);
+        Ok(result)
+    }
+}
 /// Configuration for memory-hard PoW
 #[derive(Debug, Clone)]
 pub struct PoWConfig {
@@ -55,17 +81,17 @@ impl PoWConfig {
             output_len: 32,
         }
     }
-    
+
     /// Create devnet config (very fast, instant blocks)
     pub fn devnet() -> Self {
         Self {
-            memory_cost_kib: 512,  // 512 KiB - very fast
+            memory_cost_kib: 512, // 512 KiB - very fast
             time_cost: 1,
             parallelism: 1,
             output_len: 32,
         }
     }
-    
+
     /// Create testnet config (moderate speed)
     pub fn testnet() -> Self {
         Self {
@@ -75,14 +101,14 @@ impl PoWConfig {
             output_len: 32,
         }
     }
-    
+
     /// Create mainnet config (full security, memory-hard)
     pub fn mainnet() -> Self {
         Self::default()
     }
 
     /// Create the Argon2 hasher from this config
-    fn create_argon2(&self) -> Result<Argon2<'static>> {
+    pub(crate) fn create_argon2(&self) -> Result<Argon2<'static>> {
         let params = Params::new(
             self.memory_cost_kib,
             self.time_cost,
@@ -95,34 +121,26 @@ impl PoWConfig {
     }
 }
 
-/// Compute the PoW hash for a block header with a specific nonce
-pub fn compute_pow_hash(header: &BlockHeader, nonce: u64, config: &PoWConfig) -> Result<Hash> {
+/// Prepare reusable PoW state for repeated nonce hashing.
+pub(crate) fn prepare_pow(header: &BlockHeader, config: &PoWConfig) -> Result<PreparedPow> {
     let argon2 = config.create_argon2()?;
-
-    // Serialize header (without nonce) and append nonce
     let header_bytes = borsh::to_vec(header).expect("serialization cannot fail");
 
-    // Create a unique salt from previous hash and height
     let mut salt = [0u8; 16];
     salt[..8].copy_from_slice(&header.prev_hash[..8]);
     salt[8..].copy_from_slice(&header.height.to_le_bytes());
 
-    // Input: header_bytes || nonce
-    let mut input = header_bytes;
-    input.extend_from_slice(&nonce.to_le_bytes());
+    Ok(PreparedPow {
+        argon2,
+        header_bytes,
+        salt,
+    })
+}
 
-    // Compute Argon2 hash
-    let mut output = [0u8; 32];
-    argon2
-        .hash_password_into(&input, &salt, &mut output)
-        .map_err(|e| PoWError::Argon2Error(e.to_string()))?;
-
-    // Final SHA3 mixing to ensure uniformity
-    let final_hash = Sha3_256::digest(output);
-    let mut result = [0u8; 32];
-    result.copy_from_slice(&final_hash);
-
-    Ok(result)
+/// Compute the PoW hash for a block header with a specific nonce
+pub fn compute_pow_hash(header: &BlockHeader, nonce: u64, config: &PoWConfig) -> Result<Hash> {
+    let prepared = prepare_pow(header, config)?;
+    prepared.compute_hash(nonce)
 }
 
 /// Verify that a PoW solution is valid

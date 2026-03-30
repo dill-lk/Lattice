@@ -13,6 +13,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
+const MAINNET_GENESIS_DIFFICULTY: u64 = 20_000;
+const MAINNET_DYNAMIC_DIFFICULTY_START_HEIGHT: u64 = 10;
+const MAINNET_DYNAMIC_ADJUSTMENT_INTERVAL: u64 = 10;
+const MAINNET_TARGET_BLOCK_TIME_MS: u64 = 15_000;
+
 /// Blockchain state for RPC handlers
 pub struct ChainState {
     /// Blocks indexed by height
@@ -181,7 +186,9 @@ impl RpcHandlers {
             .map_err(|_| RpcError::invalid_params("Expected array of parameters"))?;
 
         if params.is_empty() {
-            return Err(RpcError::invalid_params("Missing transaction hash parameter"));
+            return Err(RpcError::invalid_params(
+                "Missing transaction hash parameter",
+            ));
         }
 
         let hash_str = params[0]
@@ -267,7 +274,9 @@ impl RpcHandlers {
             .map_err(|_| RpcError::invalid_params("Expected array of parameters"))?;
 
         if params.is_empty() {
-            return Err(RpcError::invalid_params("Missing transaction hash parameter"));
+            return Err(RpcError::invalid_params(
+                "Missing transaction hash parameter",
+            ));
         }
 
         let hash_str = params[0]
@@ -357,12 +366,47 @@ impl RpcHandlers {
         // Merkle root of pending transactions
         let tx_root = Block::calculate_tx_root(&txs);
 
-        // Inherit difficulty from the latest block (or minimum of 1)
-        let difficulty = state
-            .blocks_by_height
-            .get(&state.height)
-            .map(|b| b.header.difficulty)
-            .unwrap_or(1);
+        // Mainnet policy:
+        // - fixed bootstrap difficulty for first 10 blocks
+        // - dynamic retarget every 10 blocks afterwards.
+        let difficulty = {
+            let next_height = state.height + 1;
+            let latest = state
+                .blocks_by_height
+                .get(&state.height)
+                .map(|b| b.header.difficulty)
+                .unwrap_or(MAINNET_GENESIS_DIFFICULTY);
+
+            if next_height <= MAINNET_DYNAMIC_DIFFICULTY_START_HEIGHT {
+                MAINNET_GENESIS_DIFFICULTY
+            } else if state.height != 0
+                && state
+                    .height
+                    .is_multiple_of(MAINNET_DYNAMIC_ADJUSTMENT_INTERVAL)
+            {
+                let interval_start = state
+                    .height
+                    .saturating_sub(MAINNET_DYNAMIC_ADJUSTMENT_INTERVAL)
+                    .saturating_add(1);
+
+                if let (Some(first), Some(last)) = (
+                    state.blocks_by_height.get(&interval_start),
+                    state.blocks_by_height.get(&state.height),
+                ) {
+                    let actual_time = last.header.timestamp.saturating_sub(first.header.timestamp);
+                    let expected_time =
+                        MAINNET_TARGET_BLOCK_TIME_MS * MAINNET_DYNAMIC_ADJUSTMENT_INTERVAL;
+
+                    let ratio = (expected_time as f64 / actual_time.max(1) as f64).clamp(0.25, 4.0);
+                    let retarget = (latest as f64 * ratio).round() as u64;
+                    retarget.max(1)
+                } else {
+                    latest
+                }
+            } else {
+                latest
+            }
+        };
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -389,7 +433,9 @@ impl RpcHandlers {
         // Store the block template keyed by work_id
         let template = Block::new(header.clone(), txs);
         // Evict stale templates for previous heights to bound memory usage
-        state.pending_work.retain(|_, b| b.header.height >= next_height);
+        state
+            .pending_work
+            .retain(|_, b| b.header.height >= next_height);
         state.pending_work.insert(work_id.clone(), template);
 
         Ok(json!({
@@ -465,14 +511,19 @@ impl RpcHandlers {
 
         // Reject if a block was already accepted at this height (no reorganisation support)
         if state.blocks_by_height.contains_key(&block_height) {
-            debug!(height = block_height, "submitWork: block already accepted at this height");
+            debug!(
+                height = block_height,
+                "submitWork: block already accepted at this height"
+            );
             return Ok(json!(false));
         }
 
         // Move block transactions from pending to confirmed
         let block_tx_hashes: std::collections::HashSet<Hash> =
             block.transactions.iter().map(|tx| tx.hash()).collect();
-        state.pending_txs.retain(|tx| !block_tx_hashes.contains(&tx.hash()));
+        state
+            .pending_txs
+            .retain(|tx| !block_tx_hashes.contains(&tx.hash()));
 
         for tx in &block.transactions {
             let tx_hash = tx.hash();

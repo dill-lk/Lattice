@@ -3,7 +3,7 @@
 //! Distributes nonce search across multiple CPU threads using rayon.
 //! Each thread searches a disjoint range of nonces.
 
-use crate::pow::{compute_pow_hash, difficulty_to_target, PoWConfig, PoWError};
+use crate::pow::{difficulty_to_target, prepare_pow, PoWConfig, PoWError};
 use lattice_core::{BlockHeader, Hash};
 use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
@@ -218,6 +218,14 @@ impl Miner {
         let mut local_count: u64 = 0;
         let mut nonce = start;
 
+        let prepared = match prepare_pow(header, &self.config) {
+            Ok(prepared) => prepared,
+            Err(e) => {
+                debug!(error = ?e, "Failed to prepare PoW context");
+                return;
+            }
+        };
+
         while nonce < end {
             // Check for cancellation or if another thread found solution
             if self.cancelled.load(Ordering::Relaxed) || found.lock().is_some() {
@@ -227,7 +235,7 @@ impl Miner {
             // Mine a batch
             let batch_end = (nonce + BATCH_SIZE).min(end);
             for n in nonce..batch_end {
-                if let Ok(hash) = compute_pow_hash(header, n, &self.config) {
+                if let Ok(hash) = prepared.compute_hash(n) {
                     local_count += 1;
 
                     if compare_hash_to_target(&hash, target) {

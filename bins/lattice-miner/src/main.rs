@@ -166,7 +166,14 @@ async fn main() -> Result<()> {
     let poll_event_tx = event_tx.clone();
 
     let poll_handle = tokio::spawn(async move {
-        work_polling_loop(poll_state, poll_rpc, poll_coinbase, poll_interval, poll_event_tx).await
+        work_polling_loop(
+            poll_state,
+            poll_rpc,
+            poll_coinbase,
+            poll_interval,
+            poll_event_tx,
+        )
+        .await
     });
 
     // Mining threads: CPU-intensive, run on a dedicated OS thread.
@@ -329,9 +336,9 @@ fn mining_loop(
 
         debug!("Mining block at height {}", work.header.height);
 
-        // With Argon2 memory-hard PoW, each hash takes ~1-2 seconds
-        // Use small chunks so stats update frequently
-        let chunk_size: u64 = 50;  // Small chunks for responsive stats
+        // Mine in larger chunks to reduce scheduling/log overhead and cover
+        // meaningful nonce ranges on higher difficulties.
+        let chunk_size: u64 = 50_000;
         let mut start_nonce: u64 = 0;
         let mut last_stats_update = Instant::now();
 
@@ -348,7 +355,10 @@ fn mining_loop(
 
             match miner.mine_range(&work.header, start_nonce, end_nonce) {
                 Ok(MiningResult::Found { nonce, hash }) => {
-                    info!("Found valid nonce: {} for height {}", nonce, work.header.height);
+                    info!(
+                        "Found valid nonce: {} for height {}",
+                        nonce, work.header.height
+                    );
 
                     let solution = SolutionFound {
                         work_id: work.work_id.clone(),
@@ -385,14 +395,13 @@ fn mining_loop(
             if miner_stats.hashes > 0 {
                 stats.add_hashes(miner_stats.hashes);
             }
-            
+
             // Log progress every 5 seconds
             if last_stats_update.elapsed() >= Duration::from_secs(5) {
                 let snap = stats.snapshot();
                 debug!(
                     "Mining progress: {} hashes, {:.2} H/s",
-                    snap.total_hashes,
-                    snap.current_hash_rate
+                    snap.total_hashes, snap.current_hash_rate
                 );
                 last_stats_update = Instant::now();
             }
@@ -427,23 +436,17 @@ async fn handle_solution(
         Ok(true) => {
             info!("Block {} accepted by node", height);
             stats.record_block_found();
-            let _ = event_tx
-                .send(MinerEvent::BlockAccepted { height })
-                .await;
+            let _ = event_tx.send(MinerEvent::BlockAccepted { height }).await;
         }
         Ok(false) => {
             warn!("Block {} rejected by node (stale or invalid)", height);
             stats.record_block_rejected();
-            let _ = event_tx
-                .send(MinerEvent::BlockRejected { height })
-                .await;
+            let _ = event_tx.send(MinerEvent::BlockRejected { height }).await;
         }
         Err(e) => {
             error!("Failed to submit solution for height {}: {}", height, e);
             stats.record_block_rejected();
-            let _ = event_tx
-                .send(MinerEvent::BlockRejected { height })
-                .await;
+            let _ = event_tx.send(MinerEvent::BlockRejected { height }).await;
         }
     }
 }
@@ -457,4 +460,3 @@ mod num_cpus {
             .unwrap_or(1)
     }
 }
-

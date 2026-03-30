@@ -353,7 +353,15 @@ fn mining_loop(
 
             let end_nonce = start_nonce.saturating_add(chunk_size);
 
-            match miner.mine_range(&work.header, start_nonce, end_nonce) {
+            let result = miner.mine_range(&work.header, start_nonce, end_nonce);
+
+            // Always update stats after mining (whether found or exhausted)
+            let miner_stats = miner.stats();
+            if miner_stats.hashes > 0 {
+                stats.add_hashes(miner_stats.hashes);
+            }
+
+            match result {
                 Ok(MiningResult::Found { nonce, hash }) => {
                     info!(
                         "Found valid nonce: {} for height {}",
@@ -370,6 +378,10 @@ fn mining_loop(
                     if let Err(e) = solution_tx.blocking_send(solution) {
                         error!("Failed to send solution: {}", e);
                     }
+
+                    // IMPORTANT: After submitting, invalidate current work so we fetch fresh work.
+                    // This prevents re-mining the same (now stale) work_id if the block is rejected.
+                    *state.current_work.write() = None;
                     break;
                 }
                 Ok(MiningResult::Exhausted) => {
@@ -388,12 +400,6 @@ fn mining_loop(
                     std::thread::sleep(Duration::from_secs(1));
                     break;
                 }
-            }
-
-            // Update stats after each chunk for responsive display
-            let miner_stats = miner.stats();
-            if miner_stats.hashes > 0 {
-                stats.add_hashes(miner_stats.hashes);
             }
 
             // Log progress every 5 seconds

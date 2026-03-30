@@ -263,24 +263,47 @@ pub async fn show_balance(address_or_wallet: &str, rpc_url: &str) -> Result<()> 
             use lattice_core::tokenomics::{LATT_PER_LAT, TOKEN_SYMBOL};
             let lat = balance as f64 / LATT_PER_LAT as f64;
 
+            // Format with thousands separator for large balances
+            let balance_str = if lat >= 1000.0 {
+                format!("{:,.4} {}", lat, TOKEN_SYMBOL)
+            } else {
+                format!("{:.8} {}", lat, TOKEN_SYMBOL)
+            };
+
             println!();
+            println!("  {}", "Wallet Balance".bold());
+            println!("  {}", "─".repeat(45).dimmed());
             println!("  {}  {}", "Address".dimmed(), address.white());
             println!(
                 "  {}  {}",
                 "Balance".dimmed(),
-                format!("{:.8} {}", lat, TOKEN_SYMBOL).green().bold()
+                balance_str.green().bold()
             );
+            println!("  {}     {} Latt", "Raw".dimmed(), format_with_commas(balance).dimmed());
             println!();
         }
         Err(e) => {
             eprintln!();
             eprintln!("  {} Failed to query: {}", "✗".red(), e);
-            eprintln!("  {} Node: {}", " ".dimmed(), rpc_url.dimmed());
+            eprintln!("  {}   {}", "Node".dimmed(), rpc_url.dimmed());
             eprintln!();
         }
     }
 
     Ok(())
+}
+
+/// Format number with comma separators
+fn format_with_commas(n: u128) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
 }
 
 /// Load wallet account from keystore file with password prompt

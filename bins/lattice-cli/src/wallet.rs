@@ -246,15 +246,15 @@ pub async fn show_balance(address_or_wallet: &str, rpc_url: &str) -> Result<()> 
     let client = RpcClient::new(rpc_url);
 
     // Determine if input is a wallet file or address
-    let address = if Path::new(address_or_wallet).exists() {
+    let (address, wallet_id) = if Path::new(address_or_wallet).exists() {
         // It's a wallet file
         let keystore = Keystore::load_from_file(address_or_wallet)?;
-        keystore.address().to_string()
+        (keystore.address().to_string(), Some(keystore.id().to_string()))
     } else {
         // Assume it's an address
         Address::from_base58(address_or_wallet)
             .map_err(|_| anyhow!("Invalid address format"))?;
-        address_or_wallet.to_string()
+        (address_or_wallet.to_string(), None)
     };
 
     // Query balance
@@ -263,30 +263,76 @@ pub async fn show_balance(address_or_wallet: &str, rpc_url: &str) -> Result<()> 
             use lattice_core::tokenomics::{LATT_PER_LAT, TOKEN_SYMBOL};
             let lat = balance as f64 / LATT_PER_LAT as f64;
 
-            // Format with thousands separator for large balances
-            let balance_str = if lat >= 1000.0 {
-                format!("{:,.4} {}", lat, TOKEN_SYMBOL)
-            } else {
-                format!("{:.8} {}", lat, TOKEN_SYMBOL)
-            };
-
+            // Beautiful balance display
             println!();
-            println!("  {}", "Wallet Balance".bold());
-            println!("  {}", "─".repeat(45).dimmed());
-            println!("  {}  {}", "Address".dimmed(), address.white());
-            println!(
-                "  {}  {}",
-                "Balance".dimmed(),
-                balance_str.green().bold()
+            println!();
+            
+            // Lattice logo/brand
+            println!("       {}", "◈ LATTICE".cyan().bold());
+            println!("       {}", "Quantum-Safe Wallet".dimmed());
+            println!();
+            
+            // Large balance display
+            let (whole, decimal) = if lat >= 1.0 {
+                let whole_part = lat.trunc() as u64;
+                let decimal_part = ((lat.fract() * 10000.0).round() as u64).min(9999);
+                (format_with_commas(whole_part as u128), format!("{:04}", decimal_part))
+            } else {
+                ("0".to_string(), format!("{:08}", ((lat * 100_000_000.0).round() as u64)))
+            };
+            
+            println!("       {}{}{} {}", 
+                whole.white().bold(),
+                ".".dimmed(),
+                decimal.dimmed(),
+                TOKEN_SYMBOL.cyan()
             );
-            println!("  {}     {} Latt", "Raw".dimmed(), format_with_commas(balance).dimmed());
+            println!();
+            
+            // Balance bar visualization (max 50 chars)
+            let bar_width = 40;
+            let filled = if lat > 0.0 {
+                // Log scale for visualization
+                let log_bal = (lat.log10() + 1.0).max(0.0).min(8.0); // 0-8 range (0.1 to 100M)
+                ((log_bal / 8.0) * bar_width as f64) as usize
+            } else {
+                0
+            };
+            let empty = bar_width - filled;
+            println!("       {}{}",
+                "█".repeat(filled).cyan(),
+                "░".repeat(empty).dimmed()
+            );
+            println!();
+            
+            // Details section
+            println!("       {}", "─".repeat(40).dimmed());
+            println!();
+            println!("       {}   {}", "Address".dimmed(), address.white());
+            if let Some(id) = wallet_id {
+                println!("       {}        {}", "ID".dimmed(), id.dimmed());
+            }
+            println!("       {}       {} Latt", "Raw".dimmed(), format_with_commas(balance).dimmed());
+            println!("       {}      {}", "Node".dimmed(), rpc_url.dimmed());
+            println!();
             println!();
         }
         Err(e) => {
-            eprintln!();
-            eprintln!("  {} Failed to query: {}", "✗".red(), e);
-            eprintln!("  {}   {}", "Node".dimmed(), rpc_url.dimmed());
-            eprintln!();
+            println!();
+            println!();
+            println!("       {}", "◈ LATTICE".cyan().bold());
+            println!("       {}", "Quantum-Safe Wallet".dimmed());
+            println!();
+            println!("       {} {}", "✗".red().bold(), "Connection Failed".red());
+            println!();
+            println!("       {}", "─".repeat(40).dimmed());
+            println!();
+            println!("       {}   {}", "Error".dimmed(), format!("{}", e).red());
+            println!("       {}    {}", "Node".dimmed(), rpc_url.dimmed());
+            println!();
+            println!("       {}", "Make sure the node is running.".dimmed());
+            println!();
+            println!();
         }
     }
 

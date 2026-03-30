@@ -88,6 +88,10 @@ struct Args {
     /// Generate default config and exit
     #[arg(long)]
     init: bool,
+
+    /// Use light PoW config (for testing on low-end hardware)
+    #[arg(long)]
+    light: bool,
 }
 
 // ============================================================================
@@ -153,6 +157,8 @@ pub struct NodeState {
     pub vm_runtime: Arc<Runtime>,
     /// Event broadcaster
     pub event_tx: broadcast::Sender<NodeEvent>,
+    /// PoW configuration for block verification
+    pub pow_config: PoWConfig,
 }
 
 impl NodeState {
@@ -599,7 +605,7 @@ fn validate_block(state: &NodeState, block: &Block) -> anyhow::Result<()> {
     }
 
     // Verify PoW
-    if !lattice_consensus::verify_pow(&block.header, &PoWConfig::default()).unwrap_or(false) {
+    if !lattice_consensus::verify_pow(&block.header, &state.pow_config).unwrap_or(false) {
         anyhow::bail!("Invalid proof of work");
     }
 
@@ -704,7 +710,7 @@ async fn start_rpc_server(config: config::RpcConfig, state: Arc<NodeState>) -> a
 
 /// Create ChainState from NodeState for RPC handlers
 fn create_chain_state(state: &NodeState) -> anyhow::Result<ChainState> {
-    let mut chain_state = ChainState::new();
+    let mut chain_state = ChainState::with_pow_config(state.pow_config.clone());
 
     // Load recent blocks
     let height = state.height();
@@ -910,6 +916,27 @@ async fn main() -> anyhow::Result<()> {
     // Create shutdown channel
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
+    // Determine PoW configuration based on network and --light flag
+    let pow_config = if args.light {
+        tracing::warn!("Using light PoW config (testing only!)");
+        PoWConfig::light()
+    } else {
+        match config.network {
+            Network::Devnet => {
+                tracing::info!("Using devnet PoW config (fast blocks)");
+                PoWConfig::devnet()
+            }
+            Network::Testnet => {
+                tracing::info!("Using testnet PoW config (moderate speed)");
+                PoWConfig::testnet()
+            }
+            Network::Mainnet => {
+                tracing::info!("Using mainnet PoW config (full security)");
+                PoWConfig::mainnet()
+            }
+        }
+    };
+
     // Create node state
     let state = Arc::new(NodeState {
         network: config.network,
@@ -929,6 +956,7 @@ async fn main() -> anyhow::Result<()> {
         }),
         vm_runtime: Arc::new(Runtime::new()),
         event_tx: event_tx.clone(),
+        pow_config,
     });
 
     // Start event loop

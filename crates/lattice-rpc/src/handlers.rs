@@ -34,6 +34,8 @@ pub struct ChainState {
     pub pending_txs: Vec<Transaction>,
     /// Pending mining work templates indexed by work_id
     pub pending_work: HashMap<String, Block>,
+    /// PoW configuration for block verification
+    pub pow_config: PoWConfig,
 }
 
 impl Default for ChainState {
@@ -61,7 +63,15 @@ impl ChainState {
             height: 0,
             pending_txs: Vec::new(),
             pending_work: HashMap::new(),
+            pow_config: PoWConfig::default(),
         }
+    }
+
+    /// Create a new ChainState with a specific PoW configuration
+    pub fn with_pow_config(pow_config: PoWConfig) -> Self {
+        let mut state = Self::new();
+        state.pow_config = pow_config;
+        state
     }
 }
 
@@ -493,7 +503,7 @@ impl RpcHandlers {
 
         // Insert the found nonce and verify the PoW
         block.header.nonce = nonce;
-        let valid = match verify_pow(&block.header, &PoWConfig::default()) {
+        let valid = match verify_pow(&block.header, &state.pow_config) {
             Ok(v) => v,
             Err(e) => {
                 warn!(work_id = %work_id, error = %e, "submitWork: PoW verification error");

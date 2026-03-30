@@ -92,12 +92,14 @@ impl PoWConfig {
         }
     }
 
-    /// Create testnet config (moderate speed)
+    /// Create testnet config (moderate speed, laptop-friendly)
+    /// 4 MB memory provides good ASIC resistance while being manageable
+    /// parallelism=1 prevents thread explosion on multi-threaded miners
     pub fn testnet() -> Self {
         Self {
-            memory_cost_kib: 4096, // 4 MiB
+            memory_cost_kib: 4096, // 4 MiB - still ASIC-resistant
             time_cost: 1,
-            parallelism: 2,
+            parallelism: 1, // Single lane - prevents 8 threads × 2 = 16 internal threads
             output_len: 32,
         }
     }

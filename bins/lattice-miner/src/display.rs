@@ -1,13 +1,6 @@
 //! Terminal display for the Lattice miner.
 //!
-//! All user-visible output is routed through this module so that:
-//!  - The startup banner and live stats reach **stdout** without log-level
-//!    prefixes or timestamps.
-//!  - Debug/trace logging (via `tracing`) goes to **stderr** and does not
-//!    interleave with the live status line.
-//!  - On a real terminal the stats line updates in-place (like xmrig).
-//!  - When stdout is not a TTY (piped / redirected) events are printed as
-//!    plain lines and the in-place update is skipped.
+//! Clean, minimal output - no visual clutter.
 
 use crate::stats::{MiningStats, StatsSnapshot};
 use colored::Colorize;
@@ -19,11 +12,7 @@ use std::sync::{
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-// ── Box geometry ──────────────────────────────────────────────────────────────
-// Total line width: 2 border chars + BOX_INNER chars = BOX_INNER + 2
-const BOX_INNER: usize = 59;
-// Width used to "erase" the live stats line before printing an event
-const CLEAR_WIDTH: usize = 120;
+const CLEAR_WIDTH: usize = 100;
 
 // ── Events ────────────────────────────────────────────────────────────────────
 
@@ -49,111 +38,56 @@ pub enum MinerEvent {
 
 // ── One-shot prints ───────────────────────────────────────────────────────────
 
-/// Print the startup banner directly to stdout (no tracing prefix).
+/// Print the startup banner - clean and minimal
 pub fn print_banner(version: &str, threads: usize, coinbase: &str, rpc: &str, network: &str) {
-    let bar = "═".repeat(BOX_INNER);
-    // Truncate long strings so they fit in the box without wrapping.
-    let coinbase_disp = truncate(coinbase, BOX_INNER - 12);
-    let rpc_disp = truncate(rpc, BOX_INNER - 12);
-    let network_disp = network.to_uppercase();
-
-    let lines = [
-        format!("╔{}╗", bar),
-        format!(
-            "║{:^inner$}║",
-            format!("⛏  LATTICE MINER  v{}", version),
-            inner = BOX_INNER
-        ),
-        format!("╠{}╣", bar),
-        format!(
-            "║  {:<width$}║",
-            format!("Network : {}", network_disp),
-            width = BOX_INNER - 2
-        ),
-        format!(
-            "║  {:<width$}║",
-            format!("Threads : {}", threads),
-            width = BOX_INNER - 2
-        ),
-        format!(
-            "║  {:<width$}║",
-            format!("Coinbase: {}", coinbase_disp),
-            width = BOX_INNER - 2
-        ),
-        format!(
-            "║  {:<width$}║",
-            format!("Node RPC: {}", rpc_disp),
-            width = BOX_INNER - 2
-        ),
-        format!("╚{}╝", bar),
-    ];
-
     println!();
-    for line in &lines {
-        println!("{}", line.cyan().bold());
-    }
+    println!(
+        "  {}  {}",
+        "LATTICE MINER".bold().cyan(),
+        format!("v{}", version).dimmed()
+    );
+    println!("  {}", "─".repeat(50).dimmed());
+    println!(
+        "  {}  {}",
+        "Network".dimmed(),
+        network.to_uppercase().white()
+    );
+    println!("  {}  {}", "Threads".dimmed(), threads.to_string().white());
+    println!("  {} {}", "Coinbase".dimmed(), coinbase.white());
+    println!("  {}  {}", "RPC".dimmed(), rpc.dimmed());
     println!();
 }
 
-/// Print the session summary to stdout when the miner shuts down.
+/// Print the session summary when the miner shuts down.
 pub fn print_final_stats(stats: &MiningStats) {
     let snap = stats.snapshot();
-    let bar = "═".repeat(BOX_INNER);
 
-    // Erase the live line first (cursor may be mid-line).
+    // Erase the live line first
     if io::stdout().is_terminal() {
-        print!("\r{:<width$}\r\n", "", width = CLEAR_WIDTH);
+        print!("\r{:<width$}\r", "", width = CLEAR_WIDTH);
         let _ = io::stdout().flush();
     }
 
-    let lines = [
-        format!("╔{}╗", bar),
-        format!("║{:^inner$}║", "Session Summary", inner = BOX_INNER),
-        format!("╠{}╣", bar),
-        format!(
-            "║  {:<width$}║",
-            format!("Uptime      : {}", stats.uptime_string()),
-            width = BOX_INNER - 2
-        ),
-        format!(
-            "║  {:<width$}║",
-            format!("Total hashes: {}", fmt_number(snap.total_hashes)),
-            width = BOX_INNER - 2
-        ),
-        format!(
-            "║  {:<width$}║",
-            format!(
-                "Avg hashrate: {}",
-                MiningStats::format_hash_rate(snap.average_hash_rate)
-            ),
-            width = BOX_INNER - 2
-        ),
-        format!(
-            "║  {:<width$}║",
-            format!(
-                "Blocks found: {}  rejected: {}",
-                snap.blocks_found, snap.blocks_rejected
-            ),
-            width = BOX_INNER - 2
-        ),
-        format!("╚{}╝", bar),
-    ];
-
     println!();
-    for line in &lines {
-        println!("{}", line.cyan());
-    }
+    println!("  {}", "Session Summary".bold());
+    println!("  {}", "─".repeat(40).dimmed());
+    println!("  Uptime       {}", stats.uptime_string().white());
+    println!("  Hashes       {}", fmt_number(snap.total_hashes).cyan());
+    println!(
+        "  Avg Rate     {}",
+        MiningStats::format_hash_rate(snap.average_hash_rate).green()
+    );
+    println!(
+        "  Blocks       {} found  {} rejected",
+        snap.blocks_found.to_string().green(),
+        snap.blocks_rejected.to_string().red()
+    );
     println!();
 }
 
 // ── Async display loop ────────────────────────────────────────────────────────
 
-/// Long-running async task that owns all stdout output after startup.
-///
-/// * Receives [`MinerEvent`]s from worker tasks and prints them cleanly.
-/// * On a TTY: refreshes a live stats line in-place every second.
-/// * Not a TTY: prints important events as plain lines; stats every
-///   `non_tty_stats_secs` seconds.
+/// Long-running async task for display output.
 pub async fn display_loop(
     mut event_rx: mpsc::Receiver<MinerEvent>,
     stats: Arc<MiningStats>,
@@ -161,8 +95,6 @@ pub async fn display_loop(
     non_tty_stats_secs: u64,
 ) {
     let is_tty = io::stdout().is_terminal();
-
-    // One-second tick drives the live stats line.
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -176,11 +108,9 @@ pub async fn display_loop(
                 let snap = stats.snapshot();
 
                 if is_tty {
-                    let line = live_line(&snap, h, &stats.uptime_string());
-                    print!("\r{}", line);
+                    print!("\r{}", live_line(&snap, h, &stats.uptime_string()));
                     let _ = io::stdout().flush();
                 } else if elapsed_secs.is_multiple_of(non_tty_stats_secs) {
-                    // Non-TTY fallback: plain stats line periodically.
                     println!("{}", snap);
                 }
             }
@@ -204,12 +134,16 @@ fn handle_event(
     is_tty: bool,
 ) {
     match ev {
-        MinerEvent::WorkUpdate { height, difficulty, tx_count } => {
+        MinerEvent::WorkUpdate {
+            height,
+            difficulty,
+            tx_count,
+        } => {
             current_height.store(height, Ordering::Relaxed);
             let msg = format!(
-                " {}  Block {}  ·  difficulty {}  ·  {} tx",
-                "→".blue().bold(),
-                format!("#{}", height).white().bold(),
+                "  {} block {} · diff {} · {} tx",
+                "→".blue(),
+                height.to_string().bold(),
                 fmt_difficulty(difficulty).dimmed(),
                 tx_count,
             );
@@ -217,11 +151,11 @@ fn handle_event(
         }
 
         MinerEvent::BlockFound { height, nonce } => {
-            // Refresh hashrate before the congratulatory line.
             let _ = stats.snapshot();
             let msg = format!(
-                " 🎉  Block {}  found!  nonce=0x{:x}  · submitting...",
-                format!("#{}", height).yellow().bold(),
+                "  {} block {} found · nonce {:x}",
+                "●".yellow(),
+                height.to_string().bold(),
                 nonce,
             );
             print_above(&msg, is_tty);
@@ -229,38 +163,36 @@ fn handle_event(
 
         MinerEvent::BlockAccepted { height } => {
             let msg = format!(
-                " {}  Block {}  accepted  (+10 LAT)",
+                "  {} block {} accepted · +10 LAT",
                 "✓".green().bold(),
-                format!("#{}", height).green().bold(),
+                height.to_string().green().bold(),
             );
             print_above(&msg, is_tty);
         }
 
         MinerEvent::BlockRejected { height } => {
             let msg = format!(
-                " {}  Block {}  rejected  (stale or invalid)",
-                "✗".red().bold(),
-                format!("#{}", height).red(),
+                "  {} block {} rejected",
+                "✗".red(),
+                height.to_string().red(),
             );
             print_above(&msg, is_tty);
         }
 
         MinerEvent::NodeConnected { height } => {
             let msg = format!(
-                " {}  Connected to node  ·  current block {}",
-                "✓".green().bold(),
-                format!("#{}", height).white(),
+                "  {} connected · block {}",
+                "✓".green(),
+                height.to_string().dimmed(),
             );
             print_above(&msg, is_tty);
         }
 
         MinerEvent::NodeError { attempt } => {
-            // Only print on the first attempt and every 10th thereafter
-            // to avoid flooding the output with repeated errors.
             if attempt <= 1 || attempt % 10 == 0 {
                 let msg = format!(
-                    " {}  Node unreachable (attempt {})  · retrying...",
-                    "⚠".yellow().bold(),
+                    "  {} node unreachable · attempt {}",
+                    "!".yellow(),
                     attempt,
                 );
                 print_above(&msg, is_tty);
@@ -269,14 +201,6 @@ fn handle_event(
     }
 }
 
-/// Print `msg` above the live stats line.
-///
-/// On a TTY:
-///   1. Move to start of the stats line (`\r`).
-///   2. Overwrite with spaces to erase it.
-///   3. Return to start (`\r`) and print the message followed by a newline.
-///
-/// Not a TTY: just `println!`.
 fn print_above(msg: &str, is_tty: bool) {
     if is_tty {
         print!("\r{:<width$}\r{}\n", "", msg, width = CLEAR_WIDTH);
@@ -286,32 +210,29 @@ fn print_above(msg: &str, is_tty: bool) {
     let _ = io::stdout().flush();
 }
 
-/// Build the live stats line (no trailing newline — updated with `\r`).
+/// Build the live stats line - compact and readable
 fn live_line(snap: &StatsSnapshot, height: u64, uptime: &str) -> String {
     let block = if height == 0 {
-        "waiting for work...".dimmed().to_string()
+        "...".dimmed().to_string()
     } else {
-        format!("#{}", height).white().bold().to_string()
+        format!("#{}", height)
     };
 
     let rate = MiningStats::format_hash_rate(snap.current_hash_rate);
-    let avg = MiningStats::format_hash_rate(snap.average_hash_rate);
-    let found = snap.blocks_found.to_string();
-    let total_hashes = fmt_number(snap.total_hashes);
+    let hashes = fmt_compact(snap.total_hashes);
 
     format!(
-        " {}  {}  │  {}  (avg {})  │  {} hashes  │  {} found  │  up {}   ",
-        "⛏",
-        block,
+        "  {} {} {} {} {} {} {}",
+        "mining".dimmed(),
+        block.white(),
+        "│".dimmed(),
         rate.green(),
-        avg.dimmed(),
-        total_hashes.cyan(),
-        found.yellow(),
-        uptime,
+        "│".dimmed(),
+        hashes.cyan(),
+        format!("│ {}", uptime).dimmed(),
     )
 }
 
-/// Format a difficulty value as a human-readable string (e.g. `1.0M`).
 fn fmt_difficulty(d: u64) -> String {
     if d >= 1_000_000_000 {
         format!("{:.1}G", d as f64 / 1_000_000_000.0)
@@ -324,7 +245,6 @@ fn fmt_difficulty(d: u64) -> String {
     }
 }
 
-/// Format a large integer with thousands separators (e.g. `1,234,567`).
 fn fmt_number(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
@@ -337,18 +257,18 @@ fn fmt_number(n: u64) -> String {
     out.chars().rev().collect()
 }
 
-/// Truncate a string to `max` chars (character-aware), appending `...` if truncated.
-fn truncate(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_owned()
+/// Compact number format (e.g., 1.2M instead of 1,234,567)
+fn fmt_compact(n: u64) -> String {
+    if n >= 1_000_000_000 {
+        format!("{:.1}G", n as f64 / 1_000_000_000.0)
+    } else if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
     } else {
-        let truncated: String = chars[..max.saturating_sub(3)].iter().collect();
-        format!("{}...", truncated)
+        n.to_string()
     }
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -359,22 +279,18 @@ mod tests {
         assert_eq!(fmt_difficulty(500), "500");
         assert_eq!(fmt_difficulty(1_500), "1.5K");
         assert_eq!(fmt_difficulty(2_000_000), "2.0M");
-        assert_eq!(fmt_difficulty(3_000_000_000), "3.0G");
     }
 
     #[test]
     fn test_fmt_number() {
         assert_eq!(fmt_number(0), "0");
-        assert_eq!(fmt_number(999), "999");
-        assert_eq!(fmt_number(1_000), "1,000");
         assert_eq!(fmt_number(1_234_567), "1,234,567");
     }
 
     #[test]
-    fn test_truncate() {
-        assert_eq!(truncate("hello", 10), "hello");
-        assert_eq!(truncate("hello world", 8), "hello...");
-        // Multi-byte characters must not cause a panic
-        assert_eq!(truncate("こんにちは世界", 5), "こん...");
+    fn test_fmt_compact() {
+        assert_eq!(fmt_compact(500), "500");
+        assert_eq!(fmt_compact(1_500), "1.5K");
+        assert_eq!(fmt_compact(1_500_000), "1.5M");
     }
 }

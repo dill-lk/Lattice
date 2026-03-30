@@ -1009,31 +1009,47 @@ fn expand_tilde(path: &str) -> String {
 
 /// Print startup banner
 fn print_banner(config: &NodeConfig) {
+    use colored::Colorize;
+
     println!();
-    println!("╔═══════════════════════════════════════════════════════════╗");
-    println!("║                      LATTICE NODE                         ║");
-    println!("║          Quantum-Resistant Blockchain Full Node           ║");
-    println!("╚═══════════════════════════════════════════════════════════╝");
-    println!();
-    tracing::info!("Configuration:");
-    tracing::info!("  Network:        {:?}", config.network);
-    tracing::info!("  Data dir:       {:?}", config.data_dir);
-    tracing::info!("  P2P:            {}", config.p2p.listen_addr);
+    println!(
+        "  {}  {}",
+        "LATTICE NODE".bold().cyan(),
+        "v0.1.0".dimmed()
+    );
+    println!("  {}", "─".repeat(50).dimmed());
+    println!(
+        "  {}   {:?}",
+        "Network".dimmed(),
+        config.network
+    );
+    println!(
+        "  {}  {:?}",
+        "Data dir".dimmed(),
+        config.data_dir
+    );
+    println!(
+        "  {}       {}",
+        "P2P".dimmed(),
+        config.p2p.listen_addr
+    );
     if config.rpc.enabled {
-        tracing::info!("  RPC:            {}:{}", config.rpc.host, config.rpc.port);
-    } else {
-        tracing::info!("  RPC:            disabled");
+        println!(
+            "  {}       {}:{}",
+            "RPC".dimmed(),
+            config.rpc.host,
+            config.rpc.port
+        );
     }
     if config.mining.enabled {
-        tracing::info!(
-            "  Mining:         enabled ({} threads)",
+        println!(
+            "  {}    {} threads",
+            "Mining".dimmed(),
             config.mining.threads
         );
         if let Some(coinbase) = &config.mining.coinbase {
-            tracing::info!("  Coinbase:       {}", coinbase);
+            println!("  {}  {}", "Coinbase".dimmed(), coinbase);
         }
-    } else {
-        tracing::info!("  Mining:         disabled");
     }
     println!();
 }

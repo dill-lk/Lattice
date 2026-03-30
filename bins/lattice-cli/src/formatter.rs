@@ -169,29 +169,18 @@ pub fn progress_bar(total: u64, message: &str) -> ProgressBar {
     pb
 }
 
-/// Print a box with content
+/// Print a box with content - simplified
 pub fn print_box(title: &str, content: &[String]) {
-    let max_width = content.iter().map(|s| s.len()).max().unwrap_or(0).max(title.len());
-    let width = max_width + 4;
-
-    // Top border
-    println!("╭{}╮", "─".repeat(width));
-    
-    // Title
-    let padding = (width - title.len()) / 2;
-    println!("│{}{}{:padding$}│", " ".repeat(padding), title.bold(), "", padding = width - padding - title.len());
-    println!("├{}┤", "─".repeat(width));
-    
-    // Content
+    println!();
+    println!("  {}", title.bold());
+    println!("  {}", "─".repeat(50).dimmed());
     for line in content {
-        println!("│  {:width$}  │", line, width = max_width);
+        println!("  {}", line);
     }
-    
-    // Bottom border
-    println!("╰{}╯", "─".repeat(width));
+    println!();
 }
 
-/// Print a transaction card
+/// Print a transaction card - minimal style
 pub fn print_transaction_card(
     hash: &Hash,
     from: &Address,
@@ -200,37 +189,37 @@ pub fn print_transaction_card(
     status: &str,
     block: BlockHeight,
 ) {
-    println!("\n╭{}╮", "─".repeat(68));
-    println!("│  {}  │", "Transaction Details".bold().cyan());
-    println!("├{}┤", "─".repeat(68));
-    println!("│  {:18} {}  │", "Hash:", format_hash(hash).bright_white());
-    println!("│  {:18} {}  │", "From:", format_address_short(from).white());
-    println!("│  {:18} {}  │", "To:", format_address_short(to).white());
-    println!("│  {:18} {}  │", "Amount:", format_amount_colored(amount));
-    
     let status_colored = match status {
-        "Success" => status.green().bold(),
-        "Failed" => status.red().bold(),
-        "Pending" => status.yellow().bold(),
+        "Success" => status.green(),
+        "Failed" => status.red(),
+        "Pending" => status.yellow(),
         _ => status.white(),
     };
-    println!("│  {:18} {}  │", "Status:", status_colored);
-    println!("│  {:18} {}  │", "Block:", format_height(block).bright_white());
-    println!("╰{}╯", "─".repeat(68));
+
+    println!();
+    println!("  {}", "Transaction".bold());
+    println!("  {}", "─".repeat(50).dimmed());
+    println!("  {}    {}", "Hash".dimmed(), format_hash(hash).white());
+    println!("  {}    {}", "From".dimmed(), format_address_short(from));
+    println!("  {}      {}", "To".dimmed(), format_address_short(to));
+    println!("  {}  {}", "Amount".dimmed(), format_amount_colored(amount));
+    println!("  {}  {}", "Status".dimmed(), status_colored);
+    println!("  {}   #{}", "Block".dimmed(), format_height(block));
+    println!();
 }
 
-/// Print a wallet info card
+/// Print a wallet info card - minimal style
 pub fn print_wallet_card(address: &Address, balance: Amount, nonce: u64) {
-    println!("\n╭{}╮", "─".repeat(68));
-    println!("│  {}  │", "Wallet Information".bold().cyan());
-    println!("├{}┤", "─".repeat(68));
-    println!("│  {:18} {}  │", "Address:", format_address(address).bright_white());
-    println!("│  {:18} {}  │", "Balance:", format_amount_colored(balance));
-    println!("│  {:18} {}  │", "Nonce:", nonce.to_string().white());
-    println!("╰{}╯", "─".repeat(68));
+    println!();
+    println!("  {}", "Wallet".bold());
+    println!("  {}", "─".repeat(50).dimmed());
+    println!("  {} {}", "Address".dimmed(), format_address(address).white());
+    println!("  {} {}", "Balance".dimmed(), format_amount_colored(balance));
+    println!("  {}   {}", "Nonce".dimmed(), nonce.to_string().dimmed());
+    println!();
 }
 
-/// Print a block info card
+/// Print a block info card - minimal style
 pub fn print_block_card(
     height: BlockHeight,
     hash: &Hash,
@@ -238,35 +227,26 @@ pub fn print_block_card(
     tx_count: usize,
     miner: &Address,
 ) {
-    println!("\n╭{}╮", "─".repeat(68));
-    println!("│  {}  │", format!("Block #{}", format_height(height)).bold().cyan());
-    println!("├{}┤", "─".repeat(68));
-    println!("│  {:18} {}  │", "Hash:", format_hash(hash).bright_white());
-    println!("│  {:18} {}  │", "Timestamp:", timestamp.to_string().white());
-    println!("│  {:18} {}  │", "Transactions:", tx_count.to_string().bright_white());
-    println!("│  {:18} {}  │", "Miner:", format_address_short(miner).white());
-    println!("╰{}╯", "─".repeat(68));
+    println!();
+    println!("  {} {}", "Block".bold(), format!("#{}", format_height(height)).cyan());
+    println!("  {}", "─".repeat(50).dimmed());
+    println!("  {}   {}", "Hash".dimmed(), format_hash(hash).white());
+    println!("  {}   {}", "Time".dimmed(), timestamp.to_string().dimmed());
+    println!("  {}    {}", "Txs".dimmed(), tx_count.to_string().white());
+    println!("  {}  {}", "Miner".dimmed(), format_address_short(miner));
+    println!();
 }
 
-/// Print welcome banner
+/// Print welcome banner - clean and minimal
 pub fn print_banner() {
-    let banner = r#"
-    ╔══════════════════════════════════════════════════════════╗
-    ║                                                          ║
-    ║   ██╗      █████╗ ████████╗████████╗██╗ ██████╗███████╗ ║
-    ║   ██║     ██╔══██╗╚══██╔══╝╚══██╔══╝██║██╔════╝██╔════╝ ║
-    ║   ██║     ███████║   ██║      ██║   ██║██║     █████╗   ║
-    ║   ██║     ██╔══██║   ██║      ██║   ██║██║     ██╔══╝   ║
-    ║   ███████╗██║  ██║   ██║      ██║   ██║╚██████╗███████╗ ║
-    ║   ╚══════╝╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚═╝ ╚═════╝╚══════╝ ║
-    ║                                                          ║
-    ║          Quantum-Resistant Blockchain                   ║
-    ║                  CLI v0.1.0                             ║
-    ║                                                          ║
-    ╚══════════════════════════════════════════════════════════╝
-    "#;
-
-    println!("{}", banner.bright_cyan().bold());
+    println!();
+    println!(
+        "  {}  {}",
+        "LATTICE CLI".bold().cyan(),
+        "v0.1.0".dimmed()
+    );
+    println!("  {}", "Quantum-Resistant Blockchain".dimmed());
+    println!();
 }
 
 /// Print command help with nice formatting

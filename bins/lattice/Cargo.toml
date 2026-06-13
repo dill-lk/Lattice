@@ -1,0 +1,58 @@
+[package]
+name = "lattice"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "lattice"
+path = "src/main.rs"
+
+[dependencies]
+# Internal crates
+lattice-core = { workspace = true }
+lattice-crypto = { workspace = true }
+lattice-consensus = { workspace = true }
+lattice-network = { workspace = true }
+lattice-storage = { workspace = true }
+lattice-rpc = { workspace = true }
+lattice-vm = { workspace = true }
+lattice-wallet = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+borsh = { workspace = true }
+toml = "0.8"
+
+# Utils
+hex = { workspace = true }
+parking_lot = { workspace = true }
+dirs = "5.0"
+colored = "2.1"
+num_cpus = { workspace = true }
+
+# HTTP client for RPC
+reqwest = { version = "0.11", features = ["json"] }
+
+# Interactive password input
+dialoguer = "0.11"
+
+# Terminal formatting
+console = "0.15"
+indicatif = "0.17"
+num-format = "0.4"

@@ -10,9 +10,7 @@ members = [
     "crates/lattice-storage",
     "crates/lattice-rpc",
     "crates/lattice-wallet",
-    "bins/lattice-node",
-    "bins/lattice-cli",
-    "bins/lattice-miner",
+    "bins/lattice",
 ]
 
 [workspace.package]

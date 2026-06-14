@@ -41,15 +41,43 @@ impl WalletAccount {
         }
     }
 
-    /// Create account from secret key bytes
+    /// Create account from key material bytes.
+    ///
+    /// For Dilithium, the public key cannot be safely reconstructed from the
+    /// secret key alone. This function therefore accepts either:
+    /// - combined key material in the format `[pub_len: u32][public_key][secret_key]`
+    /// - or returns an error if only a raw secret key was supplied.
     pub fn from_secret_key(secret_bytes: &[u8]) -> crate::Result<Self> {
-        let _secret = lattice_crypto::SecretKey::from_bytes(secret_bytes)
+        if let Ok(secret) = lattice_crypto::SecretKey::from_bytes(secret_bytes) {
+            let _ = secret;
+            return Err(crate::WalletError::Crypto(
+                "raw secret-key import is unsafe for Dilithium because the public key cannot be reconstructed from secret bytes alone; use a keystore or combined key material export instead"
+                    .to_string(),
+            ));
+        }
+
+        if secret_bytes.len() < 4 {
+            return Err(crate::WalletError::Crypto(
+                "key material payload too short".to_string(),
+            ));
+        }
+
+        let pub_len = u32::from_le_bytes(
+            secret_bytes[0..4]
+                .try_into()
+                .map_err(|_| crate::WalletError::Crypto("invalid key material header".to_string()))?,
+        ) as usize;
+
+        if secret_bytes.len() < 4 + pub_len {
+            return Err(crate::WalletError::Crypto(
+                "combined key material is truncated".to_string(),
+            ));
+        }
+
+        let public_bytes = &secret_bytes[4..4 + pub_len];
+        let secret_key_bytes = &secret_bytes[4 + pub_len..];
+        let keypair = Keypair::from_bytes(public_bytes, secret_key_bytes)
             .map_err(|e| crate::WalletError::Crypto(format!("{}", e)))?;
-        
-        // Generate keypair from secret (we need to reconstruct public key)
-        // In Dilithium, we can't easily derive public from secret, so we store both
-        // For now, regenerate - in production, keystore stores both
-        let keypair = Keypair::generate();
         Ok(Self::from_keypair(keypair))
     }
 
@@ -134,11 +162,34 @@ mod tests {
     fn test_sign_verify() {
         let account = WalletAccount::generate();
         let message = b"Hello, Lattice!";
-        
+
         let signature = account.sign(message);
         assert!(account.verify(message, &signature));
-        
+
         // Wrong message should fail
         assert!(!account.verify(b"Wrong message", &signature));
+    }
+
+    #[test]
+    fn test_from_combined_key_material() {
+        let account = WalletAccount::generate();
+        let public_bytes = account.public_key_bytes();
+        let secret_bytes = account.secret_key_bytes();
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&(public_bytes.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&public_bytes);
+        payload.extend_from_slice(&secret_bytes);
+
+        let recovered = WalletAccount::from_secret_key(&payload).unwrap();
+        assert_eq!(recovered.address(), account.address());
+    }
+
+    #[test]
+    fn test_from_raw_secret_key_rejected() {
+        let account = WalletAccount::generate();
+        let secret_bytes = account.secret_key_bytes();
+        let result = WalletAccount::from_secret_key(&secret_bytes);
+        assert!(result.is_err());
     }
 }

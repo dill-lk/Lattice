@@ -10,17 +10,30 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use libp2p::futures::StreamExt;
+use libp2p::{identity, noise, swarm::SwarmEvent, tcp, yamux, Multiaddr, PeerId, SwarmBuilder};
 use parking_lot::RwLock;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tracing_subscriber::EnvFilter;
 
 use crate::node::config::{parse_network, NodeConfig};
 use lattice_consensus::{DifficultyAdjuster, MinerBuilder, MiningResult, PoWConfig};
 use lattice_core::genesis::GenesisConfig;
-use lattice_core::tokenomics::lat_to_latt;
-use lattice_core::{Account, Address, Block, BlockHeader, BlockHeight, Hash, Network, Transaction};
+use lattice_core::tokenomics::{lat_to_latt, BLOCK_REWARD};
+use lattice_core::validation::{
+    execute_block as execute_block_to_state, validate_block as validate_block_with_context,
+    validate_transaction as validate_transaction_with_context, BlockValidationContext,
+    TxValidationContext,
+};
+use lattice_core::{
+    Account, Address, Block, BlockHeader, BlockHeight, Hash, Network, State, Transaction,
+};
 use lattice_crypto::sha3_256;
-use lattice_rpc::{ChainState, RpcConfig as RpcServerConfig, RpcHandlers, RpcServer};
+use lattice_network::{
+    ChainSync, NetworkBehavior, NetworkBehaviorEvent, NetworkEvent as P2pEvent, PeerConfig,
+    PeerManager, SyncConfig as NetSyncConfig, SyncRequest, SyncResponse,
+};
+use lattice_rpc::{ChainState, PeerSnapshot, RpcConfig as RpcServerConfig, RpcHandlers, RpcServer};
 use lattice_storage::{BlockStore, MempoolStore, StateStore};
 use lattice_vm::Runtime;
 
@@ -107,6 +120,12 @@ pub enum NodeEvent {
     Shutdown,
 }
 
+#[derive(Debug, Clone)]
+pub enum NetworkCommand {
+    BroadcastBlock(Block),
+    BroadcastTransaction(Transaction),
+}
+
 /// Current sync status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncStatus {
@@ -137,6 +156,12 @@ pub struct NodeState {
     pub chain_tip: RwLock<Hash>,
     /// Sync status
     pub sync_status: RwLock<SyncStatus>,
+    /// Lightweight peer snapshots for operator UX / RPC status
+    pub peer_infos: RwLock<Vec<PeerSnapshot>>,
+    /// Shared RPC-visible chain state
+    pub rpc_state: Arc<RwLock<ChainState>>,
+    /// Networking command channel for broadcast actions
+    pub network_tx: mpsc::UnboundedSender<NetworkCommand>,
     /// Difficulty adjuster
     pub difficulty: Arc<DifficultyAdjuster>,
     /// VM runtime for contract execution
@@ -239,6 +264,75 @@ fn load_or_create_genesis(
     Ok(genesis)
 }
 
+fn current_timestamp_ms() -> anyhow::Result<u64> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as u64)
+}
+
+fn load_current_state(state_store: &StateStore) -> anyhow::Result<State> {
+    state_store
+        .load_state()
+        .map_err(|e| anyhow::anyhow!("Failed to load current state: {e}"))
+}
+
+fn persist_state(state_store: &StateStore, state: &State) -> anyhow::Result<()> {
+    state_store
+        .replace_state(state)
+        .map_err(|e| anyhow::anyhow!("Failed to persist updated state: {e}"))
+}
+
+fn apply_block_to_chain(state: &NodeState, block: &Block) -> anyhow::Result<Hash> {
+    let pre_state = load_current_state(&state.state_store)?;
+    let parent_block = if block.header.height == 0 {
+        None
+    } else {
+        state
+            .block_store
+            .get_by_height(block.header.height.saturating_sub(1))
+            .map_err(|e| anyhow::anyhow!("Failed to load parent block: {e}"))?
+    };
+
+    let ctx = BlockValidationContext {
+        parent_block: parent_block.as_ref(),
+        current_timestamp: current_timestamp_ms()?,
+        state: &pre_state,
+    };
+
+    validate_block_with_context(block, &ctx)
+        .map_err(|e| anyhow::anyhow!("Core block validation failed: {e}"))?;
+
+    if !lattice_consensus::verify_pow(&block.header, &state.pow_config)
+        .map_err(|e| anyhow::anyhow!("PoW verification failed: {e}"))?
+    {
+        anyhow::bail!("Invalid proof of work");
+    }
+
+    let post_state = execute_block_to_state(block, pre_state)
+        .map_err(|e| anyhow::anyhow!("Block execution failed: {e}"))?;
+    let computed_state_root = post_state.root();
+
+    if block.header.state_root != computed_state_root {
+        anyhow::bail!(
+            "State root mismatch: header={:?} computed={:?}",
+            block.header.state_root,
+            computed_state_root
+        );
+    }
+
+    persist_state(&state.state_store, &post_state)?;
+    state
+        .state_store
+        .create_snapshot(block.header.height)
+        .map_err(|e| anyhow::anyhow!("Failed to create state snapshot: {e}"))?;
+    state
+        .block_store
+        .put(block)
+        .map_err(|e| anyhow::anyhow!("Failed to store block: {e}"))?;
+
+    Ok(block.hash())
+}
+
 /// Mining coordinator that produces new blocks
 async fn run_miner(
     state: Arc<NodeState>,
@@ -322,11 +416,14 @@ async fn run_miner(
 
                 tracing::info!("⛏ Mined block {} with hash {:?}", block.header.height, hash);
 
-                if let Err(e) = state.block_store.put(&block) {
-                    tracing::error!("Failed to store mined block: {}", e);
-                } else {
-                    state.update_tip(block.header.height, hash);
-                    state.emit_event(NodeEvent::BlockMined(Arc::new(block)));
+                match apply_block_to_chain(&state, &block) {
+                    Ok(applied_hash) => {
+                        state.update_tip(block.header.height, applied_hash);
+                        state.emit_event(NodeEvent::BlockMined(Arc::new(block)));
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to apply mined block: {}", e);
+                    }
                 }
             }
             Ok(Ok(MiningResult::Cancelled)) => {
@@ -347,19 +444,43 @@ async fn run_miner(
     }
 }
 
-/// Build a block template for mining
+/// Build a block template for mining.
 async fn build_block_template(state: &NodeState, coinbase: Address) -> anyhow::Result<Block> {
     let parent_height = state.height();
     let parent_hash = state.tip();
+    let mut working_state = load_current_state(&state.state_store)?;
+    let candidate_txs = state.mempool.get_sorted_by_fee(1000)?;
+    let timestamp = current_timestamp_ms()?;
 
-    let txs = state.mempool.get_sorted_by_fee(1000)?;
+    let mut selected_txs = Vec::new();
+    for tx in candidate_txs {
+        let tx_ctx = TxValidationContext {
+            state: &working_state,
+            chain_id: state.network.chain_id(),
+            current_timestamp: timestamp,
+        };
 
-    let tx_hashes: Vec<&[u8]> = txs.iter().map(|tx| tx.data.as_slice()).collect();
-    let tx_root = if tx_hashes.is_empty() {
-        [0u8; 32]
-    } else {
-        sha3_256(&tx_hashes.concat())
-    };
+        if validate_transaction_with_context(&tx, &tx_ctx).is_err() {
+            continue;
+        }
+
+        if lattice_core::validation::execute_transaction(&tx, &mut working_state).is_err() {
+            continue;
+        }
+
+        selected_txs.push(tx);
+    }
+
+    let total_fees: u128 = selected_txs.iter().map(|tx| tx.fee).sum();
+    let coinbase_account = working_state.get_account_mut(&coinbase);
+    coinbase_account.balance = coinbase_account
+        .balance
+        .checked_add(BLOCK_REWARD)
+        .and_then(|value| value.checked_add(total_fees))
+        .ok_or_else(|| anyhow::anyhow!("Coinbase reward overflow while building block template"))?;
+
+    let tx_root = Block::calculate_tx_root(&selected_txs);
+    let state_root = working_state.root();
 
     let difficulty = match state.network {
         Network::Mainnet => {
@@ -421,10 +542,8 @@ async fn build_block_template(state: &NodeState, coinbase: Address) -> anyhow::R
         height: parent_height + 1,
         prev_hash: parent_hash,
         tx_root,
-        state_root: [0u8; 32],
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_millis() as u64,
+        state_root,
+        timestamp,
         difficulty,
         nonce: 0,
         coinbase,
@@ -432,7 +551,7 @@ async fn build_block_template(state: &NodeState, coinbase: Address) -> anyhow::R
 
     Ok(Block {
         header,
-        transactions: txs,
+        transactions: selected_txs,
     })
 }
 
@@ -462,15 +581,18 @@ async fn run_event_loop(
                     Ok(NodeEvent::BlockMined(block)) => {
                         tracing::info!("Block {} mined and stored", block.header.height);
                         for tx in &block.transactions {
-                            let tx_hash = sha3_256(&borsh::to_vec(tx).unwrap_or_default());
-                            let _ = state.mempool.remove(&tx_hash);
+                            let _ = state.mempool.remove(&tx.hash());
                         }
+                        let _ = state.network_tx.send(NetworkCommand::BroadcastBlock((*block).clone()));
+                        let _ = refresh_rpc_state_from_node(&state);
                     }
                     Ok(NodeEvent::PeerConnected(peer)) => {
                         tracing::info!("Peer connected: {}", peer);
+                        let _ = refresh_rpc_state_from_node(&state);
                     }
                     Ok(NodeEvent::PeerDisconnected(peer)) => {
                         tracing::info!("Peer disconnected: {}", peer);
+                        let _ = refresh_rpc_state_from_node(&state);
                     }
                     Ok(NodeEvent::SyncStatusChanged(status)) => {
                         *state.sync_status.write() = status;
@@ -481,6 +603,7 @@ async fn run_event_loop(
                             }
                             SyncStatus::InitialSync => tracing::info!("Starting initial sync"),
                         }
+                        let _ = refresh_rpc_state_from_node(&state);
                     }
                     Ok(NodeEvent::Shutdown) => {
                         tracing::info!("Shutdown event received");
@@ -501,110 +624,64 @@ async fn run_event_loop(
     tracing::info!("Event loop stopped");
 }
 
-/// Handle a new block received from network
+/// Handle a new block received from the network.
 async fn handle_new_block(state: &NodeState, block: &Block) {
-    let block_hash = sha3_256(&borsh::to_vec(&block.header).unwrap_or_default());
-
     tracing::debug!(
         "Processing block {} hash={:?}",
         block.header.height,
-        block_hash
+        block.hash()
     );
 
-    if let Err(e) = validate_block(state, block) {
-        tracing::warn!("Invalid block: {}", e);
-        return;
-    }
-
-    if let Err(e) = state.block_store.put(block) {
-        tracing::error!("Failed to store block: {}", e);
-        return;
-    }
-
-    if block.header.height > state.height() {
-        state.update_tip(block.header.height, block_hash);
-        tracing::info!("Chain tip updated to height {}", block.header.height);
-
-        for tx in &block.transactions {
-            if let Err(e) = execute_transaction(state, tx) {
-                tracing::warn!("Transaction execution failed: {}", e);
+    match apply_block_to_chain(state, block) {
+        Ok(block_hash) => {
+            if block.header.height > state.height() {
+                state.update_tip(block.header.height, block_hash);
             }
+
+            for tx in &block.transactions {
+                let _ = state.mempool.remove(&tx.hash());
+            }
+
+            let _ = refresh_rpc_state_from_node(state);
+            tracing::info!("Chain tip updated to height {}", block.header.height);
+        }
+        Err(e) => {
+            tracing::warn!("Rejected block {}: {}", block.header.height, e);
         }
     }
 }
 
-/// Validate a block before accepting it
-fn validate_block(state: &NodeState, block: &Block) -> anyhow::Result<()> {
-    let expected_height = state.height() + 1;
-    if block.header.height != expected_height && block.header.height != 0 {
-        if block.header.height <= state.height() {
-            anyhow::bail!(
-                "Block height {} <= current height {}",
-                block.header.height,
-                state.height()
-            );
-        }
-    }
-
-    if block.header.height > 0 && block.header.prev_hash != state.tip() {
-        tracing::debug!("Block parent doesn't match current tip");
-    }
-
-    if !lattice_consensus::verify_pow(&block.header, &state.pow_config).unwrap_or(false) {
-        anyhow::bail!("Invalid proof of work");
-    }
-
-    Ok(())
-}
-
-/// Handle a new transaction from network or RPC
+/// Handle a new transaction from network or RPC.
 async fn handle_new_transaction(state: &NodeState, tx: &Transaction) {
-    let tx_hash = sha3_256(&borsh::to_vec(tx).unwrap_or_default());
+    tracing::debug!("Processing transaction {:?}", tx.hash());
 
-    tracing::debug!("Processing transaction {:?}", tx_hash);
+    let current_state = match load_current_state(&state.state_store) {
+        Ok(state_snapshot) => state_snapshot,
+        Err(e) => {
+            tracing::warn!("Failed to load state for transaction validation: {}", e);
+            return;
+        }
+    };
 
-    if let Err(e) = validate_transaction(tx) {
+    let ctx = TxValidationContext {
+        state: &current_state,
+        chain_id: state.network.chain_id(),
+        current_timestamp: current_timestamp_ms().unwrap_or_default(),
+    };
+
+    if let Err(e) = validate_transaction_with_context(tx, &ctx) {
         tracing::warn!("Invalid transaction: {}", e);
         return;
     }
 
     if let Err(e) = state.mempool.add(tx) {
         tracing::warn!("Failed to add transaction to mempool: {}", e);
+    } else {
+        let _ = state
+            .network_tx
+            .send(NetworkCommand::BroadcastTransaction(tx.clone()));
+        let _ = refresh_rpc_state_from_node(state);
     }
-}
-
-/// Validate a transaction
-fn validate_transaction(tx: &Transaction) -> anyhow::Result<()> {
-    if tx.signature.is_empty() {
-        anyhow::bail!("Missing signature");
-    }
-
-    if !tx.public_key.is_empty() && !tx.verify_signature() {
-        anyhow::bail!("Invalid signature");
-    }
-
-    Ok(())
-}
-
-/// Execute a transaction and update state
-fn execute_transaction(_state: &NodeState, tx: &Transaction) -> anyhow::Result<()> {
-    match tx.kind {
-        lattice_core::TransactionKind::Transfer => {
-            tracing::debug!(
-                "Transfer: {:?} -> {:?}, amount: {}",
-                tx.from,
-                tx.to,
-                tx.amount
-            );
-        }
-        lattice_core::TransactionKind::Deploy => {
-            tracing::debug!("Contract deployment from {:?}", tx.from);
-        }
-        lattice_core::TransactionKind::Call => {
-            tracing::debug!("Contract call to {:?}", tx.to);
-        }
-    }
-    Ok(())
 }
 
 /// Start the RPC server
@@ -620,9 +697,9 @@ async fn start_rpc_server(config: config::RpcConfig, state: Arc<NodeState>) -> a
         cors_enabled: config.cors_enabled,
     };
 
-    let chain_state = create_chain_state(&state)?;
+    refresh_rpc_state_from_node(&state)?;
 
-    let handlers = RpcHandlers::with_state(Arc::new(RwLock::new(chain_state)));
+    let handlers = RpcHandlers::with_state(state.rpc_state.clone());
     let server = RpcServer::with_handlers(rpc_config, handlers);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
@@ -637,8 +714,8 @@ async fn start_rpc_server(config: config::RpcConfig, state: Arc<NodeState>) -> a
     Ok(())
 }
 
-/// Create ChainState from NodeState for RPC handlers
-fn create_chain_state(state: &NodeState) -> anyhow::Result<ChainState> {
+/// Refresh the live RPC-visible chain state from the node state.
+fn refresh_rpc_state_from_node(state: &NodeState) -> anyhow::Result<()> {
     let mut chain_state = ChainState::with_pow_config(state.pow_config.clone());
 
     let height = state.height();
@@ -646,7 +723,7 @@ fn create_chain_state(state: &NodeState) -> anyhow::Result<ChainState> {
         if let Ok(Some(block)) = state.block_store.get_by_height(h) {
             let hash = sha3_256(&borsh::to_vec(&block.header)?);
             for tx in &block.transactions {
-                let tx_hash = sha3_256(&borsh::to_vec(tx).unwrap_or_default());
+                let tx_hash = tx.hash();
                 chain_state
                     .transactions
                     .insert(tx_hash, (tx.clone(), Some(hash)));
@@ -661,28 +738,309 @@ fn create_chain_state(state: &NodeState) -> anyhow::Result<ChainState> {
         }
     }
 
-    if let Ok(founder) = Address::from_base58(lattice_core::tokenomics::FOUNDER_WALLET_ADDRESS) {
-        if let Ok(Some(account)) = state.state_store.get_account(&founder) {
-            chain_state.balances.insert(founder, account.balance);
+    if let Ok(addresses) = state.state_store.list_accounts() {
+        for address in addresses {
+            if let Ok(Some(account)) = state.state_store.get_account(&address) {
+                chain_state.balances.insert(address, account.balance);
+            }
         }
     }
 
-    Ok(chain_state)
+    if let Ok(pending) = state.mempool.get_sorted_by_fee(256) {
+        chain_state.pending_txs = pending;
+    }
+
+    let sync_status = *state.sync_status.read();
+    match sync_status {
+        SyncStatus::Synced => {
+            chain_state.syncing = false;
+            chain_state.sync_current = state.height();
+            chain_state.sync_target = state.height();
+        }
+        SyncStatus::Syncing { current, target } => {
+            chain_state.syncing = true;
+            chain_state.sync_current = current;
+            chain_state.sync_target = target;
+        }
+        SyncStatus::InitialSync => {
+            chain_state.syncing = true;
+            chain_state.sync_current = state.height();
+            chain_state.sync_target = state.height().max(1);
+        }
+    }
+
+    chain_state.peer_infos = state.peer_infos.read().clone();
+    *state.rpc_state.write() = chain_state;
+    Ok(())
 }
 
-/// Start P2P networking
+fn socketaddr_to_multiaddr(addr: SocketAddr) -> anyhow::Result<Multiaddr> {
+    match addr.ip() {
+        std::net::IpAddr::V4(ip) => format!("/ip4/{}/tcp/{}", ip, addr.port())
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid listen multiaddr: {e}")),
+        std::net::IpAddr::V6(ip) => format!("/ip6/{}/tcp/{}", ip, addr.port())
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid listen multiaddr: {e}")),
+    }
+}
+
+fn sync_peer_snapshots_from_manager(peer_manager: &PeerManager, state: &NodeState) {
+    let mut snapshots = Vec::new();
+    for peer_id in peer_manager.connected_peers() {
+        if let Some(info) = peer_manager.get_peer(&peer_id) {
+            let address = info
+                .addresses
+                .first()
+                .map(|addr| addr.to_string())
+                .unwrap_or_else(|| peer_id.to_string());
+            snapshots.push(PeerSnapshot {
+                id: peer_id.to_string(),
+                address,
+                latency_ms: 0,
+                score: info.score.score,
+            });
+        }
+    }
+    *state.peer_infos.write() = snapshots;
+}
+
+fn build_sync_status_response(state: &NodeState) -> SyncResponse {
+    SyncResponse::Status {
+        protocol_version: lattice_network::PROTOCOL_VERSION.to_string(),
+        best_height: state.height(),
+        best_hash: state.tip(),
+        genesis_hash: state
+            .block_store
+            .get_genesis_hash()
+            .ok()
+            .flatten()
+            .unwrap_or([0u8; 32]),
+    }
+}
+
+fn build_headers_response(state: &NodeState, start_hash: Hash, max_headers: u32) -> SyncResponse {
+    let headers = match state.block_store.get(&start_hash) {
+        Ok(Some(start_block)) => state
+            .block_store
+            .get_range(
+                start_block.height().saturating_add(1),
+                start_block
+                    .height()
+                    .saturating_add(max_headers as u64),
+            )
+            .unwrap_or_default()
+            .into_iter()
+            .map(|block| block.header)
+            .collect(),
+        _ => Vec::new(),
+    };
+    SyncResponse::Headers(headers)
+}
+
+fn build_blocks_response(state: &NodeState, hashes: Vec<Hash>) -> SyncResponse {
+    let mut blocks = Vec::new();
+    for hash in hashes {
+        if let Ok(Some(block)) = state.block_store.get(&hash) {
+            blocks.push(block);
+        }
+    }
+    SyncResponse::Blocks(blocks)
+}
+
+fn build_pooled_transactions_response(state: &NodeState, hashes: Vec<Hash>) -> SyncResponse {
+    let mut txs = Vec::new();
+    for hash in hashes {
+        if let Ok(Some(tx)) = state.mempool.get(&hash) {
+            txs.push(tx);
+        }
+    }
+    SyncResponse::PooledTransactions(txs)
+}
+
+fn dispatch_sync_requests<B>(
+    behaviour: &mut NetworkBehavior,
+    sync: &ChainSync,
+    requests: Vec<(PeerId, SyncRequest)>,
+) {
+    for (peer, request) in requests {
+        if let Ok(request_id) = behaviour.send_sync_request(&peer, request.clone()) {
+            sync.register_request(request_id, peer, &request);
+        }
+    }
+}
+
+fn import_ready_blocks(state: &NodeState, sync: &ChainSync) {
+    while let Some(block) = sync.next_block_to_import() {
+        if let Ok(hash) = apply_block_to_chain(state, &block) {
+            state.update_tip(block.header.height, hash);
+            sync.update_local_state(block.header.height, hash);
+            state.emit_event(NodeEvent::SyncStatusChanged(SyncStatus::Syncing {
+                current: sync.local_height(),
+                target: sync.target_height(),
+            }));
+        }
+    }
+
+    if !sync.is_syncing() || sync.progress() >= 1.0 {
+        state.emit_event(NodeEvent::SyncStatusChanged(SyncStatus::Synced));
+    }
+}
+
+fn handle_p2p_event(
+    event: P2pEvent,
+    state: &Arc<NodeState>,
+    behaviour: &mut NetworkBehavior,
+    peer_manager: &PeerManager,
+    sync: &ChainSync,
+    response_channel: Option<libp2p::request_response::ResponseChannel<Vec<u8>>>,
+) {
+    match event {
+        P2pEvent::GossipBlock(block) => {
+            state.emit_event(NodeEvent::NewBlock(Arc::new(block)));
+        }
+        P2pEvent::GossipTransaction(tx) => {
+            state.emit_event(NodeEvent::NewTransaction(Arc::new(tx)));
+        }
+        P2pEvent::GossipBlockHeader(header) => {
+            tracing::debug!(height = header.height, "Received block header gossip");
+        }
+        P2pEvent::PeerDiscovered(peer_id) => {
+            peer_manager.add_peer(peer_id, None);
+            sync_peer_snapshots_from_manager(peer_manager, state);
+            let _ = refresh_rpc_state_from_node(state);
+        }
+        P2pEvent::PeerExpired(peer_id) => {
+            peer_manager.on_mdns_expired(&peer_id);
+            sync_peer_snapshots_from_manager(peer_manager, state);
+            let _ = refresh_rpc_state_from_node(state);
+        }
+        P2pEvent::SyncRequest {
+            peer,
+            request,
+            ..
+        } => {
+            if let Some(channel) = response_channel {
+                let response = match request {
+                    SyncRequest::GetStatus => build_sync_status_response(state),
+                    SyncRequest::GetHeaders {
+                        start_hash,
+                        max_headers,
+                    } => build_headers_response(state, start_hash, max_headers),
+                    SyncRequest::GetBlocks { hashes } => build_blocks_response(state, hashes),
+                    SyncRequest::GetPooledTransactions { hashes } => {
+                        build_pooled_transactions_response(state, hashes)
+                    }
+                };
+                let _ = behaviour.send_sync_response(channel, response);
+                peer_manager.reward_peer(&peer, 1);
+            }
+        }
+        P2pEvent::SyncResponse {
+            peer,
+            request_id,
+            response,
+        } => {
+            sync.complete_request(request_id);
+            let next_requests = match response {
+                SyncResponse::Status {
+                    best_height,
+                    best_hash,
+                    genesis_hash,
+                    ..
+                } => sync
+                    .on_status_response(peer, best_height, best_hash, genesis_hash, peer_manager)
+                    .into_iter()
+                    .collect(),
+                SyncResponse::Headers(headers) => sync.on_headers_response(peer, headers, peer_manager),
+                SyncResponse::Blocks(blocks) => sync.on_blocks_response(peer, blocks, peer_manager),
+                SyncResponse::PooledTransactions(txs) => {
+                    for tx in txs {
+                        state.emit_event(NodeEvent::NewTransaction(Arc::new(tx)));
+                    }
+                    Vec::new()
+                }
+                SyncResponse::Error(error) => {
+                    tracing::warn!(%peer, %error, "Received sync error response");
+                    Vec::new()
+                }
+            };
+            dispatch_sync_requests(behaviour, sync, next_requests);
+            import_ready_blocks(state, sync);
+        }
+        P2pEvent::SyncRequestFailed {
+            request_id, ..
+        } => {
+            let requests = sync.on_request_failed(request_id, peer_manager);
+            dispatch_sync_requests(behaviour, sync, requests);
+        }
+    }
+}
+
+/// Start P2P networking with a real libp2p swarm.
 async fn start_networking(
     config: config::P2pConfig,
     state: Arc<NodeState>,
     mut shutdown_rx: broadcast::Receiver<()>,
+    mut network_rx: mpsc::UnboundedReceiver<NetworkCommand>,
 ) -> anyhow::Result<()> {
     tracing::info!("Starting P2P networking on {}", config.listen_addr);
 
-    tokio::spawn(async move {
-        tracing::info!("P2P network placeholder running");
+    let peer_manager = Arc::new(PeerManager::new(PeerConfig {
+        max_peers: config.max_peers,
+        enable_mdns: config.enable_mdns,
+        ..PeerConfig::default()
+    }));
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        state.emit_event(NodeEvent::SyncStatusChanged(SyncStatus::Synced));
+    let local_key = identity::Keypair::generate_ed25519();
+    let local_peer_id = local_key.public().to_peer_id();
+    tracing::info!(%local_peer_id, "Initialized libp2p identity");
+
+    let mut behaviour = NetworkBehavior::new(&local_key, config.enable_mdns)
+        .map_err(|e| anyhow::anyhow!("Failed to create network behaviour: {e}"))?;
+    behaviour
+        .subscribe_topics()
+        .map_err(|e| anyhow::anyhow!("Failed to subscribe gossip topics: {e}"))?;
+
+    let mut swarm = SwarmBuilder::with_existing_identity(local_key)
+        .with_tokio()
+        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)
+        .map_err(|e| anyhow::anyhow!("Failed to configure TCP transport: {e}"))?
+        .with_behaviour(|_| behaviour)
+        .map_err(|e| anyhow::anyhow!("Failed to attach network behaviour: {e}"))?
+        .build();
+
+    let listen_addr = socketaddr_to_multiaddr(config.listen_addr)?;
+    swarm
+        .listen_on(listen_addr.clone())
+        .map_err(|e| anyhow::anyhow!("Failed to start listening: {e}"))?;
+
+    for bootnode in &config.bootnodes {
+        match bootnode.parse::<Multiaddr>() {
+            Ok(addr) => {
+                let _ = swarm.dial(addr.clone());
+                tracing::info!(%addr, "Dialing configured bootnode");
+            }
+            Err(e) => tracing::warn!(%bootnode, %e, "Invalid bootnode multiaddr"),
+        }
+    }
+
+    let genesis_hash = state
+        .block_store
+        .get_genesis_hash()?
+        .unwrap_or([0u8; 32]);
+    let sync = ChainSync::new(
+        NetSyncConfig::default(),
+        genesis_hash,
+        state.height(),
+        state.tip(),
+    );
+
+    sync_peer_snapshots_from_manager(&peer_manager, &state);
+    let _ = refresh_rpc_state_from_node(&state);
+
+    tokio::spawn(async move {
+        let mut housekeeping = tokio::time::interval(Duration::from_secs(5));
 
         loop {
             tokio::select! {
@@ -690,8 +1048,68 @@ async fn start_networking(
                     tracing::info!("P2P network shutting down");
                     break;
                 }
-                _ = tokio::time::sleep(Duration::from_secs(60)) => {
-                    tracing::debug!("P2P heartbeat");
+                Some(command) = network_rx.recv() => {
+                    match command {
+                        NetworkCommand::BroadcastBlock(block) => {
+                            let _ = swarm.behaviour_mut().publish_block(block);
+                        }
+                        NetworkCommand::BroadcastTransaction(tx) => {
+                            let _ = swarm.behaviour_mut().publish_transaction(tx);
+                        }
+                    }
+                }
+                _ = housekeeping.tick() => {
+                    let timeout_requests = sync.check_timeouts(&peer_manager);
+                    dispatch_sync_requests(swarm.behaviour_mut(), &sync, timeout_requests);
+                    if sync.is_stalled() {
+                        sync.reset_after_stall();
+                    }
+                    sync_peer_snapshots_from_manager(&peer_manager, &state);
+                    let _ = refresh_rpc_state_from_node(&state);
+                }
+                event = swarm.select_next_some() => {
+                    match event {
+                        SwarmEvent::NewListenAddr { address, .. } => {
+                            tracing::info!(%address, "Listening for peers");
+                            sync_peer_snapshots_from_manager(&peer_manager, &state);
+                            let _ = refresh_rpc_state_from_node(&state);
+                            if config.bootnodes.is_empty() {
+                                state.emit_event(NodeEvent::SyncStatusChanged(SyncStatus::Synced));
+                            }
+                        }
+                        SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
+                            let inbound = endpoint.is_listener();
+                            peer_manager.on_peer_connected(peer_id, inbound);
+                            sync_peer_snapshots_from_manager(&peer_manager, &state);
+                            let _ = refresh_rpc_state_from_node(&state);
+                            state.emit_event(NodeEvent::PeerConnected(peer_id.to_string()));
+                            let requests = sync.start_sync(&peer_manager);
+                            dispatch_sync_requests(swarm.behaviour_mut(), &sync, requests);
+                        }
+                        SwarmEvent::ConnectionClosed { peer_id, endpoint, .. } => {
+                            let inbound = endpoint.is_listener();
+                            peer_manager.on_peer_disconnected(&peer_id, inbound);
+                            sync_peer_snapshots_from_manager(&peer_manager, &state);
+                            let _ = refresh_rpc_state_from_node(&state);
+                            state.emit_event(NodeEvent::PeerDisconnected(peer_id.to_string()));
+                        }
+                        SwarmEvent::Behaviour(NetworkBehaviorEvent::Gossipsub(event)) => {
+                            if let Some(net_event) = swarm.behaviour().process_gossipsub_event(event) {
+                                handle_p2p_event(net_event, &state, swarm.behaviour_mut(), &peer_manager, &sync, None);
+                            }
+                        }
+                        SwarmEvent::Behaviour(NetworkBehaviorEvent::Mdns(event)) => {
+                            for net_event in swarm.behaviour().process_mdns_event(event) {
+                                handle_p2p_event(net_event, &state, swarm.behaviour_mut(), &peer_manager, &sync, None);
+                            }
+                        }
+                        SwarmEvent::Behaviour(NetworkBehaviorEvent::Sync(event)) => {
+                            if let Some((net_event, response_channel)) = swarm.behaviour().process_sync_event(event) {
+                                handle_p2p_event(net_event, &state, swarm.behaviour_mut(), &peer_manager, &sync, response_channel);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -801,6 +1219,7 @@ pub async fn run_node(args: NodeArgs) -> anyhow::Result<()> {
 
     let (event_tx, _) = broadcast::channel::<NodeEvent>(1024);
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
+    let (network_tx, network_rx) = mpsc::unbounded_channel::<NetworkCommand>();
 
     let pow_config = if args.light {
         tracing::warn!("Using light PoW config (testing only!)");
@@ -830,6 +1249,9 @@ pub async fn run_node(args: NodeArgs) -> anyhow::Result<()> {
         chain_height: RwLock::new(chain_height),
         chain_tip: RwLock::new(chain_tip),
         sync_status: RwLock::new(SyncStatus::InitialSync),
+        peer_infos: RwLock::new(Vec::new()),
+        rpc_state: Arc::new(RwLock::new(ChainState::with_pow_config(pow_config.clone()))),
+        network_tx,
         difficulty: Arc::new(match config.network {
             Network::Mainnet => DifficultyAdjuster::with_params(
                 lattice_consensus::TARGET_BLOCK_TIME_MS,
@@ -843,13 +1265,21 @@ pub async fn run_node(args: NodeArgs) -> anyhow::Result<()> {
         pow_config,
     });
 
+    let _ = refresh_rpc_state_from_node(&state);
+
     let event_loop = tokio::spawn(run_event_loop(
         state.clone(),
         event_tx.subscribe(),
         shutdown_tx.subscribe(),
     ));
 
-    start_networking(config.p2p.clone(), state.clone(), shutdown_tx.subscribe()).await?;
+    start_networking(
+        config.p2p.clone(),
+        state.clone(),
+        shutdown_tx.subscribe(),
+        network_rx,
+    )
+    .await?;
 
     start_rpc_server(config.rpc.clone(), state.clone()).await?;
 
@@ -884,48 +1314,29 @@ fn expand_tilde(path: &str) -> String {
     path.to_string()
 }
 
-/// Print startup banner
+/// Print startup banner.
 fn print_banner(config: &NodeConfig) {
     use colored::Colorize;
 
+    let title = if config.mining.enabled {
+        "▲ lattice miner-node — local argon2 execution online"
+    } else {
+        "▲ lattice node — listening on sharded network mesh"
+    };
+
     println!();
-    println!(
-        "  {}  {}",
-        "LATTICE NODE".bold().cyan(),
-        "v0.1.0".dimmed()
-    );
-    println!("  {}", "─".repeat(50).dimmed());
-    println!(
-        "  {}   {:?}",
-        "Network".dimmed(),
-        config.network
-    );
-    println!(
-        "  {}  {:?}",
-        "Data dir".dimmed(),
-        config.data_dir
-    );
-    println!(
-        "  {}       {}",
-        "P2P".dimmed(),
-        config.p2p.listen_addr
-    );
+    println!("{}", title.bold().cyan());
+    println!("{}", "─".repeat(62).dimmed());
+    println!("  {:<12} {:?}", "network".dimmed(), config.network);
+    println!("  {:<12} {:?}", "data".dimmed(), config.data_dir);
+    println!("  {:<12} {}", "p2p".dimmed(), config.p2p.listen_addr);
     if config.rpc.enabled {
-        println!(
-            "  {}       {}:{}",
-            "RPC".dimmed(),
-            config.rpc.host,
-            config.rpc.port
-        );
+        println!("  {:<12} {}:{}", "rpc".dimmed(), config.rpc.host, config.rpc.port);
     }
     if config.mining.enabled {
-        println!(
-            "  {}    {} threads",
-            "Mining".dimmed(),
-            config.mining.threads
-        );
+        println!("  {:<12} {} threads", "workers".dimmed(), config.mining.threads);
         if let Some(coinbase) = &config.mining.coinbase {
-            println!("  {}  {}", "Coinbase".dimmed(), coinbase);
+            println!("  {:<12} {}", "target".dimmed(), coinbase);
         }
     }
     println!();

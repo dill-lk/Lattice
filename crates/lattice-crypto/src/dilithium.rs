@@ -52,11 +52,14 @@ impl PublicKey {
         false
     }
 
-    /// Derive an address from this public key (first 20 bytes of SHA3-256 hash)
+    /// Derive an address from this public key.
+    ///
+    /// This matches `lattice_core::Address::from_public_key`, which uses the
+    /// first 20 bytes of `SHA3-256(public_key)`.
     pub fn to_address(&self) -> [u8; 20] {
         let hash = crate::sha3_256(self.as_bytes());
         let mut addr = [0u8; 20];
-        addr.copy_from_slice(&hash[12..32]);
+        addr.copy_from_slice(&hash[..20]);
         addr
     }
 }

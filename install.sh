@@ -17,7 +17,7 @@ GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 BIN_DIR="${LATTICE_BIN_DIR:-$HOME/.local/bin}"
 CONFIG_DIR="$HOME/.lattice/config"
 DATA_DIR="$HOME/.lattice/data"
-BINARIES=(lattice-node lattice-cli lattice-miner)
+BINARIES=(lattice)
 
 # ── Colours ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -263,19 +263,19 @@ print_completion() {
     echo -e "${CYAN}🚀 Quick start:${NC}"
     echo ""
     echo -e "   ${YELLOW}1.${NC} Create a wallet:"
-    echo -e "      ${BLUE}lattice-cli wallet create${NC}"
+    echo -e "      ${BLUE}lattice wallet create${NC}"
     echo ""
     echo -e "   ${YELLOW}2.${NC} Get your wallet address:"
-    echo -e "      ${BLUE}lattice-cli wallet address${NC}"
+    echo -e "      ${BLUE}lattice wallet address${NC}"
     echo ""
     echo -e "   ${YELLOW}3.${NC} Start the node:"
-    echo -e "      ${BLUE}lattice-node${NC}"
+    echo -e "      ${BLUE}lattice node${NC}"
     echo ""
     echo -e "   ${YELLOW}4.${NC} Check node status:"
-    echo -e "      ${BLUE}lattice-cli node status${NC}"
+    echo -e "      ${BLUE}lattice status${NC}"
     echo ""
     echo -e "   ${YELLOW}5.${NC} Start mining (replace YOUR_ADDRESS with your wallet address):"
-    echo -e "      ${BLUE}lattice-node --mine --coinbase YOUR_ADDRESS${NC}"
+    echo -e "      ${BLUE}lattice miner --coinbase YOUR_ADDRESS${NC}"
     echo ""
     echo -e "${CYAN}📦 Releases & source:${NC}"
     echo -e "   ${BLUE}https://github.com/${GITHUB_REPO}/releases${NC}"

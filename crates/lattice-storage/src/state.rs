@@ -7,10 +7,9 @@
 
 use crate::error::{Result, StorageError};
 use borsh::BorshDeserialize;
-use lattice_core::{Account, Address, BlockHeight, Hash};
+use lattice_core::{Account, Address, BlockHeight, Hash, State};
 use parking_lot::RwLock;
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, WriteBatch, DB};
-use sha3::{Digest, Sha3_256};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -154,37 +153,69 @@ impl StateStore {
         Ok(self.db.get_cf(cf, code_hash)?)
     }
 
-    /// Compute state root from current state
+    /// Compute state root from current state using the same canonical logic as
+    /// `lattice_core::State::root()`.
     pub fn compute_state_root(&self) -> Result<Hash> {
-        // Check cache first
         if let Some(cached) = *self.state_root_cache.read() {
             return Ok(cached);
         }
 
-        let cf = self.cf_state();
-        let mut hasher = Sha3_256::new();
-        let mut count = 0u64;
+        let state = self.load_state()?;
+        let root = state.root();
 
-        // Iterate all accounts in sorted order (RocksDB keys are sorted)
+        *self.state_root_cache.write() = Some(root);
+        debug!(?root, accounts = state.iter_accounts().count(), "Computed state root");
+        Ok(root)
+    }
+
+    /// Load the current world state into memory.
+    pub fn load_state(&self) -> Result<State> {
+        let cf = self.cf_state();
+        let mut state = State::new();
+
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for item in iter {
             let (key, value) = item?;
-            hasher.update(&key);
-            hasher.update(&value);
-            count += 1;
+            if key.len() != 20 {
+                continue;
+            }
+
+            let address = Address::from_bytes(
+                key.as_ref()
+                    .try_into()
+                    .map_err(|_| StorageError::Deserialization("invalid address length".into()))?,
+            );
+            let account = Account::try_from_slice(&value)
+                .map_err(|e| StorageError::Deserialization(e.to_string()))?;
+            state.set_account(address, account);
         }
 
-        // Include count in hash for empty state differentiation
-        hasher.update(count.to_le_bytes());
+        Ok(state)
+    }
 
-        let mut root = [0u8; 32];
-        root.copy_from_slice(&hasher.finalize());
+    /// Replace the currently persisted state with the supplied in-memory state.
+    pub fn replace_state(&self, state: &State) -> Result<()> {
+        let cf = self.cf_state();
+        let mut batch = WriteBatch::default();
 
-        // Cache the result
-        *self.state_root_cache.write() = Some(root);
+        let existing = self.list_accounts()?;
+        for address in existing {
+            batch.delete_cf(cf, address.as_bytes());
+        }
 
-        debug!(?root, accounts = count, "Computed state root");
-        Ok(root)
+        for (address, account) in state.iter_accounts() {
+            if account.is_empty() {
+                continue;
+            }
+
+            let encoded = borsh::to_vec(account)
+                .map_err(|e| StorageError::Serialization(e.to_string()))?;
+            batch.put_cf(cf, address.as_bytes(), encoded);
+        }
+
+        self.db.write(batch)?;
+        *self.state_root_cache.write() = Some(state.root());
+        Ok(())
     }
 
     /// Create a snapshot at a given block height
@@ -464,5 +495,30 @@ mod tests {
 
         let retrieved = store.get_code(&code_hash).unwrap();
         assert_eq!(retrieved.unwrap(), code);
+    }
+
+    #[test]
+    fn test_load_state_roundtrip() {
+        let (store, _dir) = create_test_store();
+        let address = Address::from_bytes([9u8; 20]);
+        store
+            .set_account(&address, &Account::with_balance(4242))
+            .unwrap();
+
+        let state = store.load_state().unwrap();
+        assert_eq!(state.balance(&address), 4242);
+    }
+
+    #[test]
+    fn test_replace_state_updates_root_cache() {
+        let (store, _dir) = create_test_store();
+        let address = Address::from_bytes([3u8; 20]);
+        let mut state = State::new();
+        state.set_account(address.clone(), Account::with_balance(777));
+
+        store.replace_state(&state).unwrap();
+        let loaded = store.load_state().unwrap();
+        assert_eq!(loaded.balance(&address), 777);
+        assert_eq!(store.compute_state_root().unwrap(), state.root());
     }
 }

@@ -8,9 +8,10 @@ pub mod rpc_client;
 pub mod stats;
 
 use anyhow::{anyhow, Context, Result};
+use colored::Colorize;
 use display::MinerEvent;
 use lattice_consensus::{Miner, MiningResult, PoWConfig};
-use lattice_core::Address;
+use lattice_core::{Address, BlockHeader};
 use parking_lot::RwLock;
 use rpc_client::{RpcClient, WorkSolution, WorkTemplate};
 use stats::MiningStats;
@@ -46,6 +47,10 @@ pub struct MinerArgs {
     /// Use light PoW config (overrides --network setting)
     #[arg(long)]
     pub light: bool,
+
+    /// Run a local benchmark instead of connecting to a node RPC endpoint
+    #[arg(long)]
+    pub benchmark: bool,
 }
 
 /// Message sent when a solution is found
@@ -141,6 +146,10 @@ pub async fn run_miner(args: MinerArgs, rpc_url: &str) -> Result<()> {
             }
         }
     };
+
+    if args.benchmark {
+        return run_benchmark(num_threads, pow_config);
+    }
 
     let poll_state = Arc::clone(&state);
     let poll_rpc = Arc::clone(&rpc_client);
@@ -404,6 +413,40 @@ async fn handle_solution(
             let _ = event_tx.send(MinerEvent::BlockRejected { height }).await;
         }
     }
+}
+
+fn run_benchmark(num_threads: usize, pow_config: PoWConfig) -> Result<()> {
+    let miner = Miner::new(pow_config).with_threads(num_threads);
+    let header = BlockHeader {
+        version: 1,
+        height: 1,
+        prev_hash: [0u8; 32],
+        tx_root: [0u8; 32],
+        state_root: [0u8; 32],
+        timestamp: 1,
+        difficulty: 1,
+        nonce: 0,
+        coinbase: Address::zero(),
+    };
+
+    println!();
+    println!("{}", "▲ lattice miner benchmark — local argon2 throughput".bold().cyan());
+    println!("{}", "──────────────────────────────────────────────────────────────".dimmed());
+    println!("  {:<10} •  {}", "worker".dimmed(), format!("{} allocated CPU threads", num_threads).white());
+    println!("  {:<10} •  {}", "mode".dimmed(), "offline benchmark [no RPC]".white());
+    println!();
+
+    let start = Instant::now();
+    let _ = miner.mine_range(&header, 0, 200_000);
+    let elapsed = start.elapsed().as_secs_f64().max(0.001);
+    let stats = miner.stats();
+    let rate = stats.hashes as f64 / elapsed;
+
+    println!("  {:<10} •  {}", "hashes".dimmed(), stats.hashes.to_string().white());
+    println!("  {:<10} •  {}", "elapsed".dimmed(), format!("{:.2}s", elapsed).white());
+    println!("  {:<10} •  {}", "rate".dimmed(), MiningStats::format_hash_rate(rate).green());
+    println!();
+    Ok(())
 }
 
 mod num_cpus {

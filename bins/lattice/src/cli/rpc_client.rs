@@ -148,28 +148,64 @@ impl RpcClient {
         self.call("lat_sendRawTransaction", json!([tx_hex])).await
     }
 
+    /// Execute a read-only contract call.
+    pub async fn call_contract(&self, address: &str, data: Option<&str>) -> Result<String> {
+        self.call(
+            "lat_call",
+            json!([{
+                "to": address,
+                "data": data,
+            }]),
+        )
+        .await
+    }
+
     /// Get account nonce (transaction count)
     pub async fn get_transaction_count(&self, address: &str) -> Result<u64> {
         let result: String = self
             .call("lat_getTransactionCount", json!([address, "latest"]))
-            .await
-            .unwrap_or_else(|_| "0x0".to_string());
+            .await?;
         parse_hex_u64(&result)
+    }
+
+    /// Get latest block object.
+    pub async fn get_latest_block(&self, include_txs: bool) -> Result<Value> {
+        let height = self.get_block_number().await?;
+        self.get_block_by_number(height, include_txs).await
+    }
+
+    /// Get pending transaction stats from the node.
+    pub async fn get_mempool_stats(&self) -> Result<MempoolStats> {
+        self.call("lat_mempoolStats", json!([])).await
     }
 
     /// Get node sync status
     pub async fn get_sync_status(&self) -> Result<SyncStatus> {
-        let block_number = self.get_block_number().await?;
+        let result: Value = self.call("lat_syncStatus", json!([])).await?;
+        let syncing = result.get("syncing").and_then(|v| v.as_bool()).unwrap_or(false);
+        let current_block = result
+            .get("currentBlock")
+            .and_then(|v| v.as_str())
+            .map(parse_hex_u64)
+            .transpose()?
+            .unwrap_or(0);
+        let highest_block = result
+            .get("highestBlock")
+            .and_then(|v| v.as_str())
+            .map(parse_hex_u64)
+            .transpose()?
+            .unwrap_or(current_block);
+
         Ok(SyncStatus {
-            syncing: false,
-            current_block: block_number,
-            highest_block: block_number,
+            syncing,
+            current_block,
+            highest_block,
         })
     }
 
     /// Get connected peers
     pub async fn get_peers(&self) -> Result<Vec<PeerInfo>> {
-        Ok(vec![])
+        self.call("lat_peerInfo", json!([])).await
     }
 }
 
@@ -182,11 +218,22 @@ pub struct SyncStatus {
 }
 
 /// Peer information
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct PeerInfo {
     pub id: String,
     pub address: String,
     pub latency_ms: u64,
+    #[serde(default)]
+    pub score: i32,
+}
+
+/// Mempool status information.
+#[derive(Debug, Deserialize)]
+pub struct MempoolStats {
+    #[serde(rename = "pendingCount")]
+    pub pending_count: u64,
+    #[serde(rename = "pendingHashes", default)]
+    pub pending_hashes: Vec<String>,
 }
 
 /// Parse hex string to u64

@@ -136,14 +136,19 @@ impl State {
         account.nonce += 1;
     }
 
+    /// Iterate all known accounts.
+    pub fn iter_accounts(&self) -> impl Iterator<Item = (&Address, &Account)> {
+        self.accounts.iter()
+    }
+
     /// Calculate state root (simplified - real impl would use Merkle Patricia Trie)
     pub fn root(&self) -> Hash {
         use sha3::{Digest, Sha3_256};
-        
+
         let mut hasher = Sha3_256::new();
         let mut addrs: Vec<_> = self.accounts.keys().collect();
         addrs.sort_by_key(|a| a.as_bytes());
-        
+
         for addr in addrs {
             let account = &self.accounts[addr];
             hasher.update(addr.as_bytes());
@@ -151,7 +156,7 @@ impl State {
             hasher.update(account.nonce.to_le_bytes());
             hasher.update(account.code_hash);
         }
-        
+
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&hasher.finalize());
         hash

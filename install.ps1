@@ -28,7 +28,7 @@ $GithubApi   = "https://api.github.com/repos/$GithubRepo/releases/latest"
 $AssetName   = "lattice-windows-amd64.zip"
 $ConfigDir   = "$env:USERPROFILE\.lattice\config"
 $DataDir     = "$env:USERPROFILE\.lattice\data"
-$Binaries    = @("lattice-node.exe", "lattice-cli.exe", "lattice-miner.exe")
+$Binaries    = @("lattice.exe")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 function Print-Header {
@@ -205,20 +205,14 @@ function New-Shortcuts {
 
         $shell = New-Object -ComObject WScript.Shell
 
-        $sc = $shell.CreateShortcut("$desktop\Lattice Node.lnk")
-        $sc.TargetPath       = Join-Path $InstallDir "lattice-node.exe"
-        $sc.WorkingDirectory = "$env:USERPROFILE\.lattice"
-        $sc.Description      = "Lattice Blockchain Node"
-        $sc.Save()
-
-        $sc = $shell.CreateShortcut("$desktop\Lattice CLI.lnk")
+        $sc = $shell.CreateShortcut("$desktop\Lattice Console.lnk")
         $sc.TargetPath       = "powershell.exe"
-        $sc.Arguments        = "-NoExit -Command `"Set-Location '$env:USERPROFILE\.lattice'; Write-Host 'Lattice CLI ready — type lattice-cli --help' -ForegroundColor Green`""
+        $sc.Arguments        = "-NoExit -Command `"Set-Location '$env:USERPROFILE\.lattice'; Write-Host 'Lattice unified CLI ready — type lattice --help' -ForegroundColor Green`""
         $sc.WorkingDirectory = "$env:USERPROFILE\.lattice"
-        $sc.Description      = "Lattice Command-Line Interface"
+        $sc.Description      = "Lattice Unified Blockchain Console"
         $sc.Save()
 
-        Write-Ok "Shortcuts created on Desktop"
+        Write-Ok "Shortcut created on Desktop"
     } catch {
         Write-Warn "Could not create desktop shortcuts: $_"
     }
@@ -240,19 +234,19 @@ function Print-Completion {
     Write-Host "🚀 Quick start:" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "   1. Create a wallet:" -ForegroundColor Yellow
-    Write-Host "      lattice-cli wallet create" -ForegroundColor Blue
+    Write-Host "      lattice wallet create" -ForegroundColor Blue
     Write-Host ""
     Write-Host "   2. Get your wallet address:" -ForegroundColor Yellow
-    Write-Host "      lattice-cli wallet address" -ForegroundColor Blue
+    Write-Host "      lattice wallet address" -ForegroundColor Blue
     Write-Host ""
     Write-Host "   3. Start the node:" -ForegroundColor Yellow
-    Write-Host "      lattice-node" -ForegroundColor Blue
+    Write-Host "      lattice node" -ForegroundColor Blue
     Write-Host ""
     Write-Host "   4. Check node status:" -ForegroundColor Yellow
-    Write-Host "      lattice-cli node status" -ForegroundColor Blue
+    Write-Host "      lattice status" -ForegroundColor Blue
     Write-Host ""
     Write-Host "   5. Start mining (replace YOUR_ADDRESS with your wallet address):" -ForegroundColor Yellow
-    Write-Host "      lattice-node --mine --coinbase YOUR_ADDRESS" -ForegroundColor Blue
+    Write-Host "      lattice miner --coinbase YOUR_ADDRESS" -ForegroundColor Blue
     Write-Host ""
     Write-Host "📦 Releases & source:" -ForegroundColor Cyan
     Write-Host "   https://github.com/$GithubRepo/releases" -ForegroundColor Blue

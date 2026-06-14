@@ -78,18 +78,18 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 irm https://raw.githubusercontent.com/dill-lk/Lattice/main/install.ps1 | iex
 ```
 
-This installs three binaries:
+This installs the official unified executable:
 
 | Binary | Purpose |
 |--------|---------|
-| `lattice-node` | Full node (syncs blockchain, serves RPC) |
-| `lattice-miner` | Standalone CPU miner |
-| `lattice-cli` | Wallet & command-line tools |
+| `lattice` | All-in-one node, miner, wallet, query, and contract CLI |
+
+> Legacy binaries such as `lattice-node`, `lattice-miner`, and `lattice-cli` are compatibility paths only. The primary UX is `lattice ...`.
 
 ### Create Wallet
 
 ```bash
-lattice-cli wallet create
+lattice wallet create
 # Output: Address: 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft
 ```
 
@@ -97,11 +97,24 @@ lattice-cli wallet create
 
 ```bash
 # Terminal 1 — Start node
-lattice-node --network devnet
+lattice node --network devnet
 
 # Terminal 2 — Start miner
-lattice-miner --coinbase <your-address> --network devnet
+lattice miner --coinbase <your-address> --network devnet
 ```
+
+Or use the smoother local UX:
+
+```bash
+# create default wallet once
+lattice --wallet-new
+
+# start integrated local mining
+lattice --mine 4
+```
+
+If `lattice miner ...` points at the default local RPC endpoint and no node is running,
+Lattice can fall back to integrated local miner-node mode for a smoother first-run experience.
 
 That's it! You're now mining LAT. 🎉
 
@@ -115,16 +128,16 @@ Choose your network based on your needs:
 
 ```bash
 # Development (instant blocks, ~2 sec)
-lattice-node --network devnet
-lattice-miner --coinbase <addr> --network devnet
+lattice node --network devnet
+lattice miner --coinbase <addr> --network devnet
 
 # Testing (moderate speed, ~5 sec)
-lattice-node --network testnet
-lattice-miner --coinbase <addr> --network testnet
+lattice node --network testnet
+lattice miner --coinbase <addr> --network testnet
 
 # Production (full security, ~15 sec)
-lattice-node --network mainnet
-lattice-miner --coinbase <addr> --network mainnet
+lattice node --network mainnet
+lattice miner --coinbase <addr> --network mainnet
 ```
 
 ### Thread Recommendations
@@ -137,7 +150,7 @@ lattice-miner --coinbase <addr> --network mainnet
 | 16+ | 12-16 |
 
 ```bash
-lattice-miner --coinbase <addr> --threads 8 --network devnet
+lattice miner --coinbase <addr> --threads 8 --network devnet
 ```
 
 ### Mining Display
@@ -163,19 +176,25 @@ The miner shows real-time stats:
 
 ```bash
 # Create new wallet
-lattice-cli wallet create
+lattice wallet create
 
 # Show your address
-lattice-cli wallet address
+lattice wallet address
+
+# Validate an address
+lattice wallet validate <address>
 
 # Check balance
-lattice-cli wallet balance
+lattice wallet balance <address-or-wallet.json>
+
+# Check current nonce
+lattice wallet nonce <address-or-wallet.json>
 
 # Send LAT
-lattice-cli tx send --to <address> --amount 10.5
+lattice tx send --to <address> --amount 10.5
 
 # Export private key (⚠️ keep safe!)
-lattice-cli wallet export
+lattice wallet export
 ```
 
 ---
@@ -222,8 +241,8 @@ Lattice uses algorithms selected by NIST for post-quantum security:
 |---------|----------|
 | Node won't start | Check port 30303 isn't in use |
 | Miner shows 0.00 H/s | Use `--network devnet` for faster hashes |
-| RPC connection error | Make sure `lattice-node` is running |
-| Invalid coinbase address | Use address from `lattice-cli wallet address` |
+| RPC connection error | Make sure `lattice node` is running |
+| Invalid coinbase address | Use address from `lattice wallet address` |
 | Low hashrate | Increase `--threads`, close background apps |
 | Old chain data | Delete data directory and restart (see below) |
 
@@ -245,10 +264,28 @@ rm -rf ~/.local/share/lattice
 
 ```bash
 # Check node status
-lattice-cli node status
+lattice status
 
 # View peers
-lattice-cli node peers
+lattice peers
+
+# Chain summary
+lattice chain
+
+# Mempool summary
+lattice mempool
+
+# Run local diagnostics
+lattice doctor
+
+# Generate completions
+lattice completion bash
+
+# Create a starter config interactively
+lattice config init --path node.toml
+
+# Script-friendly JSON output
+lattice --json status
 
 # Open firewall (Linux)
 sudo ufw allow 30303/tcp
@@ -266,6 +303,7 @@ sudo ufw allow 30303/tcp
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Docker & production deployment |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Build from source, contribute |
 | [docs/api-reference.md](docs/api-reference.md) | JSON-RPC API reference |
+| [docs/protocol-baseline.md](docs/protocol-baseline.md) | Canonical roots, validation, tokenomics, and wallet safety baseline |
 
 ---
 
@@ -283,10 +321,8 @@ cargo build --release
 # Test
 cargo test --workspace
 
-# Install locally
-cargo install --path bins/lattice-node
-cargo install --path bins/lattice-miner
-cargo install --path bins/lattice-cli
+# Install the official unified CLI locally
+cargo install --path bins/lattice
 ```
 
 ---
@@ -295,7 +331,7 @@ cargo install --path bins/lattice-cli
 
 ```
 ┌─────────────────┐
-│   lattice-node  │ ← Full node binary
+│     lattice     │ ← Unified CLI / node / miner entrypoint
 └────────┬────────┘
          │
     ┌────┴────┬─────────────┐

@@ -2,117 +2,230 @@
 
 ## Abstract
 
-Lattice is a quantum-resistant blockchain designed for the post-quantum era. By utilizing NIST-standardized post-quantum cryptographic algorithms (CRYSTALS-Dilithium and CRYSTALS-Kyber), Lattice provides long-term security against both classical and quantum computing attacks while maintaining practical usability on consumer hardware.
+Lattice is a post-quantum blockchain built in Rust for long-term cryptographic resilience and practical operator usability. It uses NIST-standardized lattice cryptography, memory-hard Proof of Work, a persistent RocksDB state layer, JSON-RPC tooling, and a modular node architecture. The project is designed to be usable before post-quantum migration pressure becomes urgent, while remaining honest about current implementation scope.
 
-## 1. Introduction
+---
 
-The advent of large-scale quantum computers poses an existential threat to current blockchain security. Most existing blockchains rely on elliptic curve cryptography (ECDSA, Ed25519), which can be broken by Shor's algorithm running on a sufficiently powerful quantum computer.
+## 1. Problem Statement
 
-Lattice addresses this threat proactively by building on lattice-based cryptography from the ground up, rather than retrofitting quantum resistance onto existing systems.
+Most major blockchains still rely on classical public-key cryptography such as ECDSA or Ed25519. Sufficiently capable quantum computers would threaten those systems through Shor-style attacks against exposed public keys.
 
-## 2. Cryptographic Primitives
+Lattice takes the opposite path:
+- build quantum resistance into the chain from the start
+- keep the stack understandable and self-hostable
+- preserve fair participation through CPU-friendly mining
 
-### 2.1 Digital Signatures: CRYSTALS-Dilithium
+Lattice is therefore positioned as future-safe blockchain infrastructure rather than a retrofit after panic begins.
 
-Lattice uses CRYSTALS-Dilithium (Dilithium3) for all digital signatures:
-- **Security Level**: NIST Level 3 (equivalent to AES-192)
-- **Public Key Size**: 1,952 bytes
-- **Signature Size**: 3,293 bytes
-- **Based on**: Module-LWE and Module-SIS problems
+---
 
-### 2.2 Key Encapsulation: CRYSTALS-Kyber
+## 2. Cryptographic Foundation
 
-For encrypted P2P communication, Lattice uses CRYSTALS-Kyber (Kyber768):
-- **Security Level**: NIST Level 3
-- **Public Key Size**: 1,184 bytes
-- **Ciphertext Size**: 1,088 bytes
-- **Shared Secret**: 32 bytes
+### 2.1 Signatures
 
-### 2.3 Hash Function: SHA3-256
+Lattice uses **CRYSTALS-Dilithium3** for transaction and account signatures.
 
-All hashing operations use SHA3-256 (Keccak):
-- **Output Size**: 256 bits
-- **Quantum Resistance**: Requires Grover's algorithm, effective security of 128 bits
+Properties:
+- NIST post-quantum standard
+- security level: NIST level 3
+- public key size: ~1952 bytes
+- signature size: ~3309 bytes
 
-## 3. Consensus Mechanism
+### 2.2 Key Encapsulation
 
-### 3.1 Memory-Hard Proof of Work
+Lattice includes **CRYSTALS-Kyber768** primitives for post-quantum key exchange use cases.
 
-Lattice employs a memory-hard PoW algorithm based on Argon2id:
-- **Memory Requirement**: 4 GB recommended
-- **Time Cost**: 1 iteration
-- **Parallelism**: 1 lane per thread
+### 2.3 Hashing
 
-This design ensures:
-1. **ASIC Resistance**: Memory bandwidth is the bottleneck, not compute
-2. **Fair Mining**: Consumer hardware can compete effectively
-3. **Energy Efficiency**: Lower energy per hash than pure compute PoW
+Lattice uses **SHA3-256** for:
+- transaction hashing
+- block hashing
+- address derivation
+- state hashing support
 
-### 3.2 Difficulty Adjustment
+### 2.4 Address Format
 
-- **Target Block Time**: 15 seconds
-- **Adjustment Period**: Every 2,016 blocks (~8.4 hours)
-- **Maximum Adjustment**: 4x per period
+Addresses are derived from the first 20 bytes of:
 
-## 4. Network Architecture
-
-### 4.1 Peer-to-Peer Layer
-
-Built on libp2p with:
-- **Transport**: TCP with Noise encryption
-- **Multiplexing**: Yamux
-- **Discovery**: mDNS (local) + Kademlia DHT (global)
-- **Propagation**: GossipSub for blocks and transactions
-
-### 4.2 Synchronization
-
-- Header-first synchronization
-- Parallel block downloading
-- Checkpoint-based fast sync (optional)
-
-## 5. Smart Contracts
-
-### 5.1 WebAssembly Runtime
-
-Contracts execute in a sandboxed WASM environment:
-- **Runtime**: Wasmer with Singlepass compiler
-- **Memory**: Linear memory with bounds checking
-- **Determinism**: Floating-point operations disabled
-
-### 5.2 Gas Model
-
-| Operation | Gas Cost |
-|-----------|----------|
-| Base transaction | 21,000 |
-| Per data byte | 16 |
-| Storage write (32 bytes) | 20,000 |
-| Storage read (32 bytes) | 200 |
-| SHA3-256 hash | 30 + 6/word |
-| Contract creation | 32,000 + code_size × 200 |
-
-## 6. Economic Model
-
-### 6.1 Token Distribution
-
-- **Total Supply**: 100,000,000 LAT
-- **Block Reward**: Starts at 50 LAT, halves every 4 years
-- **Minimum Fee**: 1 gwei (10^-9 LAT)
-
-### 6.2 Address Format
-
-Addresses are derived from Dilithium public keys:
-```
-Address = SHA3-256(public_key)[0:20]
-Encoded = Base58Check(version_byte || Address)
+```text
+SHA3-256(public_key)
 ```
 
-## 7. Conclusion
+They are exposed to users in Base58Check form.
 
-Lattice represents a forward-looking approach to blockchain security, preparing for the quantum computing era while remaining practical and accessible today.
+---
+
+## 3. Consensus Model
+
+### 3.1 Proof of Work
+
+Lattice uses an **Argon2id-based memory-hard Proof of Work** design.
+
+Goals:
+1. reduce ASIC advantage
+2. keep mining more accessible on commodity hardware
+3. make launch distribution fairer than heavily specialized mining ecosystems
+
+### 3.2 Network Profiles
+
+Current operating profiles:
+
+| Network | Target Style | Memory Cost |
+|---|---:|---:|
+| Devnet | very fast local iteration | 512 KiB |
+| Testnet | laptop-friendly validation | 4 MiB |
+| Mainnet | full security profile | 64 MiB |
+
+### 3.3 Difficulty Strategy
+
+Lattice targets roughly **15-second blocks on mainnet** with a bootstrap period followed by dynamic adjustment.
+
+---
+
+## 4. Ledger and State Model
+
+### 4.1 State
+
+The chain tracks account state including:
+- balance
+- nonce
+- code hash
+- storage root
+
+### 4.2 Transactions
+
+Current transaction families:
+- **Transfer**
+- **Deploy**
+- **Call**
+
+### 4.3 Block Validation
+
+Canonical block validation checks:
+- structure limits
+- parent linkage
+- timestamp constraints
+- transaction root correctness
+- signature validity
+- transaction semantics
+- Proof of Work validity
+
+### 4.4 State Root
+
+Each block commits a `state_root` representing the post-execution world state after transactions and block rewards are applied.
+
+---
+
+## 5. Tokenomics
+
+Lattice uses a fixed-supply model.
+
+| Parameter | Value |
+|---|---:|
+| Symbol | LAT |
+| Total Supply | 50,000,000 LAT |
+| Decimals | 8 |
+| Block Reward | 10 LAT |
+| Genesis Allocation | 2,500,000 LAT |
+| Minable Allocation | 47,500,000 LAT |
+
+### 5.1 Genesis Allocation
+
+The genesis allocation equals **5% of supply**:
+- **500,000 LAT** immediately available
+- **2,000,000 LAT** linearly vested over 24 months
+
+### 5.2 Mining Allocation
+
+The remaining **95%** is distributed through mining rewards.
+
+### 5.3 Fee Model
+
+Fees are denominated in the native smallest unit:
+
+```text
+1 LAT = 100,000,000 Latt
+```
+
+---
+
+## 6. Node Architecture
+
+The implementation is modular:
+
+- `lattice-core` — types, validation, state, tokenomics
+- `lattice-crypto` — Dilithium, Kyber, SHA3
+- `lattice-consensus` — Argon2-based PoW
+- `lattice-storage` — RocksDB-backed persistence
+- `lattice-network` — libp2p protocol and sync primitives
+- `lattice-vm` — WASM runtime
+- `lattice-rpc` — JSON-RPC server
+- `lattice-wallet` — keystore and transaction builder
+- `lattice` — official all-in-one executable
+
+---
+
+## 7. Networking
+
+Lattice is built around **libp2p** components for:
+- gossip propagation
+- request-response synchronization
+- local discovery via mDNS
+
+The repository also contains sharding and sync primitives. However, operators should treat sharded-network language as an architectural direction rather than a claim that full production shard routing is already complete in the running node path.
+
+That distinction matters.
+
+---
+
+## 8. Smart Contracts
+
+Lattice contains a WASM runtime with gas metering and host integration primitives.
+
+Current project status should be described honestly as:
+- **smart-contract infrastructure exists**
+- **end-to-end production contract flow is still being hardened**
+
+---
+
+## 9. Design Philosophy
+
+Lattice is built around five principles:
+
+1. **future-safe cryptography**
+2. **fairer participation**
+3. **operator-first tooling**
+4. **modular Rust implementation**
+5. **honest implementation claims**
+
+---
+
+## 10. Current Status Statement
+
+Lattice should currently be understood as:
+- a real blockchain implementation
+- a serious prototype / alpha system
+- not yet a fully hardened mainnet chain
+
+That is not a weakness in itself. It is the accurate status of an engineering system still being hardened.
+
+---
+
+## 11. Conclusion
+
+Lattice exists to prove that a post-quantum blockchain can be built as practical infrastructure rather than speculative fearware. Its long-term thesis is simple:
+
+> the world will eventually care about post-quantum migration,
+> and chains built early, honestly, and credibly will have an advantage.
+
+Lattice aims to be one of those chains.
+
+---
 
 ## References
 
-1. NIST Post-Quantum Cryptography Standardization
-2. CRYSTALS-Dilithium Algorithm Specifications
-3. CRYSTALS-Kyber Algorithm Specifications
-4. Argon2 Password Hashing Function (RFC 9106)
+1. NIST Post-Quantum Cryptography Standardization Project
+2. CRYSTALS-Dilithium specification
+3. CRYSTALS-Kyber specification
+4. RFC 9106 — Argon2 Memory-Hard Function
+5. libp2p documentation

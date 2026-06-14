@@ -5,7 +5,9 @@ use crate::types::{
     BlockNumber, BlockTag, CallRequest, RpcBlock, RpcTransaction, TransactionReceipt,
 };
 use lattice_consensus::{verify_pow, PoWConfig};
-use lattice_core::{Address, Amount, Block, BlockHeader, BlockHeight, Hash, Transaction};
+use lattice_core::tokenomics::BLOCK_REWARD;
+use lattice_core::validation::execute_transaction as execute_tx_to_state;
+use lattice_core::{Account, Address, Amount, Block, BlockHeader, BlockHeight, Hash, State, Transaction};
 use parking_lot::RwLock;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -19,6 +21,14 @@ const MAINNET_DYNAMIC_ADJUSTMENT_INTERVAL: u64 = 10;
 const MAINNET_TARGET_BLOCK_TIME_MS: u64 = 15_000;
 
 /// Blockchain state for RPC handlers
+#[derive(Debug, Clone)]
+pub struct PeerSnapshot {
+    pub id: String,
+    pub address: String,
+    pub latency_ms: u64,
+    pub score: i32,
+}
+
 pub struct ChainState {
     /// Blocks indexed by height
     pub blocks_by_height: HashMap<BlockHeight, Block>,
@@ -36,6 +46,14 @@ pub struct ChainState {
     pub pending_work: HashMap<String, Block>,
     /// PoW configuration for block verification
     pub pow_config: PoWConfig,
+    /// Whether the node currently reports syncing
+    pub syncing: bool,
+    /// Sync current height for operator views
+    pub sync_current: BlockHeight,
+    /// Sync target height for operator views
+    pub sync_target: BlockHeight,
+    /// Peer info snapshots exposed to RPC clients
+    pub peer_infos: Vec<PeerSnapshot>,
 }
 
 impl Default for ChainState {
@@ -64,6 +82,10 @@ impl ChainState {
             pending_txs: Vec::new(),
             pending_work: HashMap::new(),
             pow_config: PoWConfig::default(),
+            syncing: false,
+            sync_current: 0,
+            sync_target: 0,
+            peer_infos: Vec::new(),
         }
     }
 
@@ -72,6 +94,32 @@ impl ChainState {
         let mut state = Self::new();
         state.pow_config = pow_config;
         state
+    }
+
+    fn materialize_state(&self) -> State {
+        let mut state = State::new();
+        for (address, balance) in &self.balances {
+            state.set_account(address.clone(), Account::with_balance(*balance));
+        }
+        state
+    }
+
+    fn estimate_post_block_state_root(&self, coinbase: &Address, txs: &[Transaction]) -> Hash {
+        let mut state = self.materialize_state();
+        let mut total_fees = 0u128;
+
+        for tx in txs {
+            if execute_tx_to_state(tx, &mut state).is_ok() {
+                total_fees = total_fees.saturating_add(tx.fee);
+            }
+        }
+
+        let miner_account = state.get_account_mut(coinbase);
+        miner_account.balance = miner_account
+            .balance
+            .saturating_add(BLOCK_REWARD)
+            .saturating_add(total_fees);
+        state.root()
     }
 }
 
@@ -116,10 +164,14 @@ impl RpcHandlers {
 
         match method {
             "lat_blockNumber" => self.lat_block_number(),
+            "lat_syncStatus" => self.lat_sync_status(),
+            "lat_peerInfo" => self.lat_peer_info(),
             "lat_getBlockByNumber" => self.lat_get_block_by_number(params),
             "lat_getBlockByHash" => self.lat_get_block_by_hash(params),
             "lat_getTransactionByHash" => self.lat_get_transaction_by_hash(params),
             "lat_getBalance" => self.lat_get_balance(params),
+            "lat_getTransactionCount" => self.lat_get_transaction_count(params),
+            "lat_mempoolStats" => self.lat_mempool_stats(),
             "lat_sendRawTransaction" => self.lat_send_raw_transaction(params),
             "lat_getTransactionReceipt" => self.lat_get_transaction_receipt(params),
             "lat_call" => self.lat_call(params),
@@ -137,6 +189,27 @@ impl RpcHandlers {
     pub fn lat_block_number(&self) -> Result<Value> {
         let state = self.state.read();
         Ok(json!(format!("0x{:x}", state.height)))
+    }
+
+    /// lat_syncStatus - Return a simple node-reported sync status payload
+    pub fn lat_sync_status(&self) -> Result<Value> {
+        let state = self.state.read();
+        Ok(json!({
+            "syncing": state.syncing,
+            "currentBlock": format!("0x{:x}", state.sync_current),
+            "highestBlock": format!("0x{:x}", state.sync_target.max(state.sync_current)),
+        }))
+    }
+
+    /// lat_peerInfo - Return peer information currently exposed by the node RPC
+    pub fn lat_peer_info(&self) -> Result<Value> {
+        let state = self.state.read();
+        Ok(json!(state.peer_infos.iter().map(|peer| json!({
+            "id": peer.id,
+            "address": peer.address,
+            "latency_ms": peer.latency_ms,
+            "score": peer.score,
+        })).collect::<Vec<_>>()))
     }
 
     /// lat_getBlockByNumber - Get block by height
@@ -237,6 +310,48 @@ impl RpcHandlers {
         let balance = state.balances.get(&address).copied().unwrap_or(0);
 
         Ok(json!(format!("0x{:x}", balance)))
+    }
+
+    /// lat_getTransactionCount - Get account nonce / transaction count
+    pub fn lat_get_transaction_count(&self, params: Value) -> Result<Value> {
+        let params: Vec<Value> = serde_json::from_value(params)
+            .map_err(|_| RpcError::invalid_params("Expected array of parameters"))?;
+
+        if params.is_empty() {
+            return Err(RpcError::invalid_params("Missing address parameter"));
+        }
+
+        let addr_str = params[0]
+            .as_str()
+            .ok_or_else(|| RpcError::invalid_params("Address must be a string"))?;
+        let address = Address::from_base58(addr_str)
+            .map_err(|_| RpcError::invalid_params("Invalid address format"))?;
+
+        let state = self.state.read();
+        let nonce_from_chain = state.materialize_state().nonce(&address);
+        let pending_for_sender = state
+            .pending_txs
+            .iter()
+            .filter(|tx| tx.from == address)
+            .count() as u64;
+
+        Ok(json!(format!("0x{:x}", nonce_from_chain.saturating_add(pending_for_sender))))
+    }
+
+    /// lat_mempoolStats - Return simple pending transaction stats
+    pub fn lat_mempool_stats(&self) -> Result<Value> {
+        let state = self.state.read();
+        let hashes: Vec<String> = state
+            .pending_txs
+            .iter()
+            .take(25)
+            .map(|tx| format!("0x{}", hex::encode(tx.hash())))
+            .collect();
+
+        Ok(json!({
+            "pendingCount": state.pending_txs.len(),
+            "pendingHashes": hashes,
+        }))
     }
 
     /// lat_sendRawTransaction - Submit a signed transaction
@@ -373,8 +488,13 @@ impl RpcHandlers {
         let txs = state.pending_txs.clone();
         let tx_count = txs.len();
 
-        // Merkle root of pending transactions
+        // Canonical Merkle root of pending transactions
         let tx_root = Block::calculate_tx_root(&txs);
+
+        // Best-effort state root estimation for RPC mining templates.
+        // This keeps header construction aligned with the canonical block shape
+        // used by the node path instead of emitting an all-zero placeholder.
+        let state_root = state.estimate_post_block_state_root(&coinbase, &txs);
 
         // Mainnet policy:
         // - fixed bootstrap difficulty for first 10 blocks
@@ -428,7 +548,7 @@ impl RpcHandlers {
             height: next_height,
             prev_hash,
             tx_root,
-            state_root: [0u8; 32],
+            state_root,
             timestamp,
             difficulty,
             nonce: 0,
@@ -542,6 +662,17 @@ impl RpcHandlers {
                 .entry(tx_hash)
                 .and_modify(|(_, bh)| *bh = Some(block_hash))
                 .or_insert_with(|| (tx.clone(), Some(block_hash)));
+        }
+
+        // Advance the lightweight RPC state model so future work templates are
+        // derived from an updated balance snapshot rather than a stale one.
+        let mut computed_state = state.materialize_state();
+        if let Ok(next_state) = lattice_core::validation::execute_block(&block, computed_state.clone()) {
+            computed_state = next_state;
+        }
+        state.balances.clear();
+        for (address, account) in computed_state.iter_accounts() {
+            state.balances.insert(address.clone(), account.balance);
         }
 
         // Add the new block to the chain

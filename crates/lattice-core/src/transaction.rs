@@ -65,21 +65,24 @@ impl Transaction {
         !self.signature.is_empty()
     }
 
-    /// Verify the transaction's signature
+    /// Verify the transaction's signature.
     pub fn verify_signature(&self) -> bool {
-        if !self.is_signed() {
+        if !self.is_signed() || self.public_key.is_empty() {
             return false;
         }
 
-        // Verify sender matches public key
         let derived_addr = Address::from_public_key(&self.public_key);
         if derived_addr != self.from {
             return false;
         }
 
-        // Signature verification is delegated to lattice-crypto
-        // Here we just check the format
-        !self.signature.is_empty() && !self.public_key.is_empty()
+        let public_key = match lattice_crypto::PublicKey::from_bytes(&self.public_key) {
+            Ok(pk) => pk,
+            Err(_) => return false,
+        };
+        let signature = lattice_crypto::Signature::from_bytes(&self.signature);
+
+        lattice_crypto::verify(&self.signing_bytes(), &signature, &public_key).is_ok()
     }
 
     /// Calculate gas cost for this transaction
@@ -118,6 +121,7 @@ impl Transaction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_crypto::Keypair;
 
     #[test]
     fn test_transaction_hash() {
@@ -145,5 +149,32 @@ mod tests {
             1,
         );
         assert!(!tx.is_signed());
+    }
+
+    #[test]
+    fn test_verify_signature_roundtrip() {
+        let keypair = Keypair::generate();
+        let from = Address::from_public_key(&keypair.public.to_vec());
+        let to = Address::from_bytes([7u8; 20]);
+
+        let mut tx = Transaction::transfer(from, to, 1000, 10, 0, 1);
+        tx.public_key = keypair.public.to_vec();
+        tx.signature = keypair.sign(&tx.signing_bytes()).to_vec();
+
+        assert!(tx.verify_signature());
+    }
+
+    #[test]
+    fn test_verify_signature_rejects_tampering() {
+        let keypair = Keypair::generate();
+        let from = Address::from_public_key(&keypair.public.to_vec());
+        let to = Address::from_bytes([8u8; 20]);
+
+        let mut tx = Transaction::transfer(from, to, 1000, 10, 0, 1);
+        tx.public_key = keypair.public.to_vec();
+        tx.signature = keypair.sign(&tx.signing_bytes()).to_vec();
+        tx.amount = 2000;
+
+        assert!(!tx.verify_signature());
     }
 }

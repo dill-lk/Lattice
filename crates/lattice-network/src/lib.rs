@@ -34,8 +34,8 @@ mod sync;
 pub use error::{NetworkError, Result};
 pub use peer::{PeerConfig, PeerInfo, PeerManager, PeerScore, PeerState};
 pub use protocol::{
-    GossipMessage, NetworkBehavior, NetworkEvent, SyncCodec, SyncRequest, SyncResponse,
-    PROTOCOL_VERSION, SYNC_PROTOCOL, TOPIC_BLOCKS, TOPIC_TRANSACTIONS,
+    GossipMessage, NetworkBehavior, NetworkBehaviorEvent, NetworkEvent, SyncCodec, SyncRequest,
+    SyncResponse, PROTOCOL_VERSION, SYNC_PROTOCOL, TOPIC_BLOCKS, TOPIC_TRANSACTIONS,
 };
 pub use sharding::{ShardConfig, ShardId, ShardManager, ShardingStats};
 pub use sync::{ChainSync, SyncConfig, SyncState, SyncStats};

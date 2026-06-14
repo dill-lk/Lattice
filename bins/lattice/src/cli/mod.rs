@@ -2,8 +2,10 @@
 //!
 //! A comprehensive CLI for interacting with the Lattice blockchain.
 
+pub mod doctor;
 pub mod formatter;
 pub mod node;
+pub mod output;
 pub mod query;
 pub mod rpc_client;
 pub mod transaction;
@@ -69,6 +71,32 @@ pub enum WalletCommands {
         wallet: String,
     },
 
+    /// Show or configure the default wallet path used by quick actions
+    Default {
+        #[command(subcommand)]
+        action: DefaultWalletCommands,
+    },
+
+    /// Rename a keystore file on disk
+    Rename {
+        /// Existing wallet path
+        from: String,
+        /// New wallet path
+        to: String,
+    },
+
+    /// Validate whether an address is a syntactically valid Lattice address
+    Validate {
+        /// Address to validate
+        address: String,
+    },
+
+    /// Query the current nonce / transaction count for an address
+    Nonce {
+        /// Wallet file path or address (base58)
+        address: String,
+    },
+
     /// Query wallet balance via RPC
     Balance {
         /// Wallet file path or address (base58)
@@ -81,6 +109,17 @@ pub enum WalletCommands {
     /// Delete a wallet keystore file
     Delete {
         /// Keystore file path to delete
+        wallet: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DefaultWalletCommands {
+    /// Show the currently configured default wallet path
+    Show,
+    /// Set the default wallet path used by top-level quick actions
+    Set {
+        /// Wallet file path to mark as default
         wallet: String,
     },
 }
@@ -274,6 +313,15 @@ pub enum QueryCommands {
         /// Account address (base58)
         address: String,
     },
+
+    /// Execute a read-only contract state query
+    Contract {
+        /// Contract address (base58)
+        address: String,
+        /// Optional hex call payload
+        #[arg(long)]
+        data: Option<String>,
+    },
 }
 
 pub async fn run_cli(command: CliCommands, rpc_url: &str) -> anyhow::Result<()> {
@@ -298,6 +346,23 @@ pub async fn run_cli(command: CliCommands, rpc_url: &str) -> anyhow::Result<()> 
             }
             WalletCommands::Address { wallet: wallet_path } => {
                 wallet::show_address(&wallet_path)?;
+            }
+            WalletCommands::Default { action } => match action {
+                DefaultWalletCommands::Show => {
+                    wallet::show_default_wallet()?;
+                }
+                DefaultWalletCommands::Set { wallet: wallet_path } => {
+                    wallet::set_default_wallet(&wallet_path)?;
+                }
+            },
+            WalletCommands::Rename { from, to } => {
+                wallet::rename_wallet(&from, &to)?;
+            }
+            WalletCommands::Validate { address } => {
+                wallet::validate_address(&address)?;
+            }
+            WalletCommands::Nonce { address } => {
+                wallet::show_nonce(&address, rpc_url).await?;
             }
             WalletCommands::Balance { address } => {
                 wallet::show_balance(&address, rpc_url).await?;
@@ -410,6 +475,9 @@ pub async fn run_cli(command: CliCommands, rpc_url: &str) -> anyhow::Result<()> 
             }
             QueryCommands::Account { address } => {
                 query::get_account(&address, rpc_url).await?;
+            }
+            QueryCommands::Contract { address, data } => {
+                query::get_contract_state(&address, data.as_deref(), rpc_url).await?;
             }
         },
 

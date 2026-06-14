@@ -38,23 +38,16 @@ pub enum MinerEvent {
 
 // ── One-shot prints ───────────────────────────────────────────────────────────
 
-/// Print the startup banner - clean and minimal
-pub fn print_banner(version: &str, threads: usize, coinbase: &str, rpc: &str, network: &str) {
+/// Print the startup banner - clean and minimal.
+pub fn print_banner(_version: &str, threads: usize, coinbase: &str, rpc: &str, network: &str) {
     println!();
-    println!(
-        "  {}  {}",
-        "LATTICE MINER".bold().cyan(),
-        format!("v{}", version).dimmed()
-    );
-    println!("  {}", "─".repeat(50).dimmed());
-    println!(
-        "  {}  {}",
-        "Network".dimmed(),
-        network.to_uppercase().white()
-    );
-    println!("  {}  {}", "Threads".dimmed(), threads.to_string().white());
-    println!("  {} {}", "Coinbase".dimmed(), coinbase.white());
-    println!("  {}  {}", "RPC".dimmed(), rpc.dimmed());
+    println!("{}", "▲ lattice miner — active".bold().cyan());
+    println!("{}", "──────────────────────────────────────────────────────────────".dimmed());
+    println!("  {:<10} •  {}", "worker".dimmed(), format!("{} allocated CPU threads", threads).white());
+    println!("  {:<10} •  {}", "algorithm".dimmed(), "argon2 [memory-hard proof of work]".white());
+    println!("  {:<10} •  {}", "target".dimmed(), coinbase.white());
+    println!("  {:<10} •  {}", "rpc".dimmed(), rpc.dimmed());
+    println!("  {:<10} •  {}", "network".dimmed(), network.white());
     println!();
 }
 

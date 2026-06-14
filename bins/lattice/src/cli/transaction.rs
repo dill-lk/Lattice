@@ -1,14 +1,16 @@
-//! Transaction command handlers
+//! Transaction and contract command handlers.
 
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use lattice_core::{Address, Transaction};
 use lattice_wallet::TransactionBuilder;
 
+use crate::cli::formatter;
+use crate::cli::output;
 use crate::cli::rpc_client::RpcClient;
 use crate::cli::wallet::load_wallet;
 
-/// Send tokens to a recipient directly
+/// Send tokens to a recipient directly.
 pub async fn send_transaction(
     wallet_path: &str,
     to: &str,
@@ -21,21 +23,19 @@ pub async fn send_transaction(
     let mut account = load_wallet(wallet_path)?;
     let sender_address = account.address().clone();
 
-    println!();
-    println!("  {}", "Send Transaction".bold().cyan());
-    println!("  {}", "─".repeat(50).dimmed());
-    println!();
-    println!("  {}  {}", "To".dimmed(), to.white());
-    println!("  {}  {}", "Amount".dimmed(), format!("{} LAT", format_amount(amount)).green());
-    println!("  {}  {}", "Fee".dimmed(), format!("{} LAT", format_amount(fee)).dimmed());
-    println!("  {}  {}", "From".dimmed(), sender_address.to_string().dimmed());
+    formatter::title("Send Transaction");
+    formatter::divider();
+    formatter::key_value("From", &sender_address.to_string());
+    formatter::key_value("To", to);
+    formatter::key_value("Amount", &formatter::format_amount(amount));
+    formatter::key_value("Fee", &formatter::format_amount(fee));
+    formatter::key_value("RPC", rpc_url);
 
     let client = RpcClient::new(rpc_url);
-
     let nonce = match client.get_transaction_count(&sender_address.to_base58()).await {
-        Ok(n) => n,
+        Ok(value) => value,
         Err(_) => {
-            println!("  {} Could not fetch nonce, using 0", "!".yellow());
+            formatter::warning("Could not fetch nonce from RPC. Falling back to 0.");
             0
         }
     };
@@ -50,37 +50,50 @@ pub async fn send_transaction(
 
     if let Some(gas) = gas_limit {
         builder = builder.gas_limit(gas);
+        formatter::key_value("Gas Limit", &gas.to_string());
     }
 
     let tx = builder.build(&mut account)?;
     let tx_bytes = borsh::to_vec(&tx)?;
-    let tx_hex = format!("0x{}", hex::encode(&tx_bytes));
+    let tx_hex = format!("0x{}", hex::encode(tx_bytes));
 
-    println!();
-    println!("  {} Signing...", "●".cyan());
-
+    formatter::info("Signing transaction…");
     match client.send_raw_transaction(&tx_hex).await {
         Ok(hash) => {
-            println!("  {} Broadcasting...", "●".cyan());
-            println!();
-            println!("  {}", "─".repeat(50).dimmed());
-            println!("  {} Transaction sent", "✓".green().bold());
-            println!();
-            println!("  {}  {}", "Hash".dimmed(), hash.white());
-            println!();
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": true,
+                    "action": "tx_send",
+                    "from": sender_address.to_string(),
+                    "to": to,
+                    "amount_latt": amount,
+                    "fee_latt": fee,
+                    "hash": hash,
+                    "rpc": rpc_url,
+                }));
+            }
+            formatter::success("Transaction submitted successfully.");
+            formatter::key_value("Transaction Hash", &hash.white().to_string());
         }
         Err(e) => {
-            println!();
-            println!("  {} Failed: {}", "✗".red(), e);
-            println!("  {} {}", "Node".dimmed(), rpc_url.dimmed());
-            println!();
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": false,
+                    "action": "tx_send",
+                    "error": e.to_string(),
+                    "rpc": rpc_url,
+                }));
+            }
+            formatter::error(&format!("Broadcast failed: {e}"));
+            formatter::note("Verify the node is reachable and the transaction is valid.");
         }
     }
 
+    println!();
     Ok(())
 }
 
-/// Sign a transaction offline and output the raw hex
+/// Sign a transaction offline and output the raw hex.
 pub fn sign_transaction(
     wallet_path: &str,
     to: &str,
@@ -95,22 +108,21 @@ pub fn sign_transaction(
     let sender_address = account.address().clone();
 
     let data = match data_hex {
-        Some(hex_str) => {
-            let clean = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-            hex::decode(clean).map_err(|_| anyhow!("Invalid data hex format"))?
-        }
+        Some(hex_str) => hex::decode(hex_str.trim_start_matches("0x"))
+            .map_err(|_| anyhow!("Invalid data hex format"))?,
         None => Vec::new(),
     };
 
-    println!();
-    println!("  {}", "Sign Transaction (Offline)".bold().cyan());
-    println!("  {}", "─".repeat(50).dimmed());
-    println!();
-    println!("  {}  {}", "To".dimmed(), to.white());
-    println!("  {}  {} LAT", "Amount".dimmed(), format_amount(amount).green());
-    println!("  {}   {} LAT", "Fee".dimmed(), format_amount(fee));
-    println!("  {}  {}", "From".dimmed(), sender_address.to_string().dimmed());
-    println!("  {} {}", "Nonce".dimmed(), nonce);
+    formatter::title("Offline Transaction Signing");
+    formatter::divider();
+    formatter::key_value("From", &sender_address.to_string());
+    formatter::key_value("To", to);
+    formatter::key_value("Amount", &formatter::format_amount(amount));
+    formatter::key_value("Fee", &formatter::format_amount(fee));
+    formatter::key_value("Nonce", &nonce.to_string());
+    if !data.is_empty() {
+        formatter::key_value("Payload", &format!("{} bytes", data.len()));
+    }
 
     account.set_nonce(nonce);
 
@@ -123,56 +135,79 @@ pub fn sign_transaction(
 
     if let Some(gas) = gas_limit {
         builder = builder.gas_limit(gas);
+        formatter::key_value("Gas Limit", &gas.to_string());
     }
 
     let tx = builder.build(&mut account)?;
     let tx_bytes = borsh::to_vec(&tx)?;
-    let tx_hex = format!("0x{}", hex::encode(&tx_bytes));
+    let tx_hex = format!("0x{}", hex::encode(tx_bytes));
 
-    println!();
-    println!("  {}", "─".repeat(50).dimmed());
-    println!("  {} Signed raw transaction hex:", "✓".green().bold());
-    println!();
+    if output::json_enabled() {
+        return output::emit_json(serde_json::json!({
+            "ok": true,
+            "action": "tx_sign",
+            "from": sender_address.to_string(),
+            "to": to,
+            "amount_latt": amount,
+            "fee_latt": fee,
+            "nonce": nonce,
+            "raw": tx_hex,
+        }));
+    }
+
+    formatter::success("Transaction signed.");
+    formatter::subheader("Raw Transaction Hex");
     println!("  {}", tx_hex.white());
     println!();
-
     Ok(())
 }
 
-/// Broadcast a raw transaction hex to the network
+/// Broadcast a raw transaction hex to the network.
 pub async fn broadcast_transaction(raw_hex: &str, rpc_url: &str) -> Result<()> {
     let client = RpcClient::new(rpc_url);
     let hex_clean = if raw_hex.starts_with("0x") {
         raw_hex.to_string()
     } else {
-        format!("0x{}", raw_hex)
+        format!("0x{raw_hex}")
     };
 
-    println!();
-    println!("  {}", "Broadcast Raw Transaction".bold().cyan());
-    println!("  {}", "─".repeat(50).dimmed());
-    println!();
-    println!("  {} Broadcasting to node: {}...", "●".cyan(), rpc_url);
+    formatter::title("Broadcast Raw Transaction");
+    formatter::divider();
+    formatter::key_value("RPC", rpc_url);
+    formatter::key_value("Payload Size", &format!("{} bytes", hex_clean.trim_start_matches("0x").len() / 2));
+    formatter::info("Submitting raw transaction to node…");
 
     match client.send_raw_transaction(&hex_clean).await {
         Ok(hash) => {
-            println!();
-            println!("  {}", "─".repeat(50).dimmed());
-            println!("  {} Transaction broadcasted successfully", "✓".green().bold());
-            println!();
-            println!("  {}  {}", "Hash".dimmed(), hash.white());
-            println!();
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": true,
+                    "action": "tx_broadcast",
+                    "hash": hash,
+                    "rpc": rpc_url,
+                }));
+            }
+            formatter::success("Transaction broadcasted successfully.");
+            formatter::key_value("Transaction Hash", &hash);
         }
         Err(e) => {
-            println!();
-            println!("  {} Failed: {}", "✗".red(), e);
-            println!();
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": false,
+                    "action": "tx_broadcast",
+                    "error": e.to_string(),
+                    "rpc": rpc_url,
+                }));
+            }
+            formatter::error(&format!("Broadcast failed: {e}"));
         }
     }
+
+    println!();
     Ok(())
 }
 
-/// Deploy a smart contract
+/// Deploy a smart contract.
 pub async fn deploy_contract(
     wallet_path: &str,
     wasm_path: &str,
@@ -180,26 +215,22 @@ pub async fn deploy_contract(
     gas_limit: Option<u64>,
     rpc_url: &str,
 ) -> Result<()> {
-    let wasm_bytes = std::fs::read(wasm_path).map_err(|e| anyhow!("Failed to read WASM file: {}", e))?;
-    
+    let wasm_bytes =
+        std::fs::read(wasm_path).map_err(|e| anyhow!("Failed to read WASM file: {e}"))?;
+
     let mut account = load_wallet(wallet_path)?;
     let sender_address = account.address().clone();
 
-    println!();
-    println!("  {}", "Deploy Smart Contract".bold().cyan());
-    println!("  {}", "─".repeat(50).dimmed());
-    println!();
-    println!("  {}  {}", "WASM File".dimmed(), wasm_path.white());
-    println!("  {}  {} bytes", "Size".dimmed(), wasm_bytes.len());
-    println!("  {}   {} LAT", "Fee".dimmed(), format_amount(fee).dimmed());
-    println!("  {}  {}", "Sender".dimmed(), sender_address.to_string().dimmed());
+    formatter::title("Deploy Smart Contract");
+    formatter::divider();
+    formatter::key_value("Sender", &sender_address.to_string());
+    formatter::key_value("WASM File", wasm_path);
+    formatter::key_value("Size", &format!("{} bytes", wasm_bytes.len()));
+    formatter::key_value("Fee", &formatter::format_amount(fee));
+    formatter::key_value("RPC", rpc_url);
 
     let client = RpcClient::new(rpc_url);
-
-    let nonce = match client.get_transaction_count(&sender_address.to_base58()).await {
-        Ok(n) => n,
-        Err(_) => 0,
-    };
+    let nonce = client.get_transaction_count(&sender_address.to_base58()).await.unwrap_or(0);
     account.set_nonce(nonce);
 
     let mut builder = TransactionBuilder::deploy()
@@ -210,35 +241,47 @@ pub async fn deploy_contract(
 
     if let Some(gas) = gas_limit {
         builder = builder.gas_limit(gas);
+        formatter::key_value("Gas Limit", &gas.to_string());
     }
 
     let tx = builder.build(&mut account)?;
     let tx_bytes = borsh::to_vec(&tx)?;
-    let tx_hex = format!("0x{}", hex::encode(&tx_bytes));
+    let tx_hex = format!("0x{}", hex::encode(tx_bytes));
 
-    println!();
-    println!("  {} Signing & Broadcasting...", "●".cyan());
-
+    formatter::info("Submitting deployment transaction…");
     match client.send_raw_transaction(&tx_hex).await {
         Ok(hash) => {
-            println!();
-            println!("  {}", "─".repeat(50).dimmed());
-            println!("  {} Deployment transaction sent", "✓".green().bold());
-            println!();
-            println!("  {}  {}", "Tx Hash".dimmed(), hash.white());
-            println!("  {}  To check contract address, run status command on this hash", "ℹ".cyan());
-            println!();
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": true,
+                    "action": "contract_deploy",
+                    "sender": sender_address.to_string(),
+                    "wasm": wasm_path,
+                    "fee_latt": fee,
+                    "hash": hash,
+                }));
+            }
+            formatter::success("Deployment transaction submitted.");
+            formatter::key_value("Transaction Hash", &hash);
+            formatter::note("Use `lattice tx status <hash>` to track confirmation and receipt status.");
         }
         Err(e) => {
-            println!();
-            println!("  {} Failed: {}", "✗".red(), e);
-            println!();
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": false,
+                    "action": "contract_deploy",
+                    "error": e.to_string(),
+                }));
+            }
+            formatter::error(&format!("Deployment failed: {e}"));
         }
     }
+
+    println!();
     Ok(())
 }
 
-/// Call a smart contract method
+/// Call a smart contract method.
 pub async fn call_contract(
     wallet_path: &str,
     contract_addr: &str,
@@ -249,36 +292,33 @@ pub async fn call_contract(
     gas_limit: Option<u64>,
     rpc_url: &str,
 ) -> Result<()> {
-    let contract = Address::from_base58(contract_addr).map_err(|_| anyhow!("Invalid contract address"))?;
+    let contract =
+        Address::from_base58(contract_addr).map_err(|_| anyhow!("Invalid contract address"))?;
     let mut account = load_wallet(wallet_path)?;
     let sender_address = account.address().clone();
 
     let mut payload = Vec::new();
-    let method_bytes = method.as_bytes();
-    payload.push(method_bytes.len() as u8);
-    payload.extend_from_slice(method_bytes);
+    payload.push(method.len() as u8);
+    payload.extend_from_slice(method.as_bytes());
 
     if let Some(args) = args_hex {
-        let args_clean = args.strip_prefix("0x").unwrap_or(args);
-        let args_bytes = hex::decode(args_clean).map_err(|_| anyhow!("Invalid args hex encoding"))?;
+        let args_bytes = hex::decode(args.trim_start_matches("0x"))
+            .map_err(|_| anyhow!("Invalid args hex encoding"))?;
         payload.extend(args_bytes);
     }
 
-    println!();
-    println!("  {}", "Call Smart Contract".bold().cyan());
-    println!("  {}", "─".repeat(50).dimmed());
-    println!();
-    println!("  {}  {}", "Contract".dimmed(), contract_addr.white());
-    println!("  {}    {}", "Method".dimmed(), method.yellow());
-    println!("  {}    {} LAT", "Value".dimmed(), format_amount(amount).green());
-    println!("  {}      {} LAT", "Fee".dimmed(), format_amount(fee).dimmed());
+    formatter::title("Call Smart Contract");
+    formatter::divider();
+    formatter::key_value("Caller", &sender_address.to_string());
+    formatter::key_value("Contract", contract_addr);
+    formatter::key_value("Method", method);
+    formatter::key_value("Value", &formatter::format_amount(amount));
+    formatter::key_value("Fee", &formatter::format_amount(fee));
+    formatter::key_value("RPC", rpc_url);
+    formatter::key_value("Payload", &format!("{} bytes", payload.len()));
 
     let client = RpcClient::new(rpc_url);
-
-    let nonce = match client.get_transaction_count(&sender_address.to_base58()).await {
-        Ok(n) => n,
-        Err(_) => 0,
-    };
+    let nonce = client.get_transaction_count(&sender_address.to_base58()).await.unwrap_or(0);
     account.set_nonce(nonce);
 
     let mut builder = TransactionBuilder::call()
@@ -290,93 +330,132 @@ pub async fn call_contract(
 
     if let Some(gas) = gas_limit {
         builder = builder.gas_limit(gas);
+        formatter::key_value("Gas Limit", &gas.to_string());
     }
 
     let tx = builder.build(&mut account)?;
     let tx_bytes = borsh::to_vec(&tx)?;
-    let tx_hex = format!("0x{}", hex::encode(&tx_bytes));
+    let tx_hex = format!("0x{}", hex::encode(tx_bytes));
 
-    println!();
-    println!("  {} Broadcasting contract call...", "●".cyan());
-
+    formatter::info("Submitting contract call…");
     match client.send_raw_transaction(&tx_hex).await {
         Ok(hash) => {
-            println!();
-            println!("  {}", "─".repeat(50).dimmed());
-            println!("  {} Transaction sent", "✓".green().bold());
-            println!();
-            println!("  {}  {}", "Tx Hash".dimmed(), hash.white());
-            println!();
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": true,
+                    "action": "contract_call",
+                    "caller": sender_address.to_string(),
+                    "contract": contract_addr,
+                    "method": method,
+                    "amount_latt": amount,
+                    "fee_latt": fee,
+                    "hash": hash,
+                }));
+            }
+            formatter::success("Contract call submitted.");
+            formatter::key_value("Transaction Hash", &hash);
         }
         Err(e) => {
-            println!();
-            println!("  {} Failed: {}", "✗".red(), e);
-            println!();
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": false,
+                    "action": "contract_call",
+                    "error": e.to_string(),
+                }));
+            }
+            formatter::error(&format!("Contract call failed: {e}"));
         }
     }
+
+    println!();
     Ok(())
 }
 
-/// Check transaction status
+/// Check transaction status.
 pub async fn check_status(hash: &str, rpc_url: &str) -> Result<()> {
     let client = RpcClient::new(rpc_url);
-
     let hash = if hash.starts_with("0x") {
         hash.to_string()
     } else {
-        format!("0x{}", hash)
+        format!("0x{hash}")
     };
 
     match client.get_transaction(&hash).await {
         Ok(Some(tx)) => {
-            println!();
-            println!("  {}", "Transaction".bold().cyan());
-            println!("  {}", "─".repeat(50).dimmed());
-            println!("  {}  {}", "Hash".dimmed(), hash.white());
+            let confirmed = tx.get("blockHash").is_some_and(|v| !v.is_null());
+            let receipt = client.get_transaction_receipt(&hash).await.ok().flatten();
 
-            if let Some(block_hash) = tx.get("blockHash") {
-                if !block_hash.is_null() {
-                    println!("  {}  {}", "Status".dimmed(), "Confirmed".green());
-                    if let Some(bn) = tx.get("blockNumber") {
-                        println!("  {}  #{}", "Block".dimmed(), bn.as_str().unwrap_or("?"));
-                    }
-                } else {
-                    println!("  {}  {}", "Status".dimmed(), "Pending".yellow());
-                }
-            } else {
-                println!("  {}  {}", "Status".dimmed(), "Pending".yellow());
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": true,
+                    "action": "tx_status",
+                    "hash": hash,
+                    "confirmed": confirmed,
+                    "transaction": tx,
+                    "receipt": receipt,
+                }));
             }
 
-            println!("  {}  {}", "From".dimmed(), tx.get("from").and_then(|v| v.as_str()).unwrap_or("?"));
-            println!("  {}  {}", "To".dimmed(), tx.get("to").and_then(|v| v.as_str()).unwrap_or("?"));
+            formatter::title("Transaction Status");
+            formatter::divider();
+            formatter::key_value("Hash", &hash);
+
+            if confirmed {
+                formatter::key_value_colored("State", "CONFIRMED".green().bold());
+                if let Some(number) = tx.get("blockNumber").and_then(|v| v.as_str()) {
+                    formatter::key_value("Block", number);
+                }
+            } else {
+                formatter::key_value_colored("State", "PENDING".yellow().bold());
+            }
+
+            formatter::key_value(
+                "From",
+                tx.get("from").and_then(|v| v.as_str()).unwrap_or("?"),
+            );
+            formatter::key_value("To", tx.get("to").and_then(|v| v.as_str()).unwrap_or("?"));
 
             if let Some(value) = tx.get("value").and_then(|v| v.as_str()) {
                 if let Ok(amount) = parse_hex_u128(value) {
-                    println!("  {}  {} LAT", "Value".dimmed(), format_amount(amount).green());
+                    formatter::key_value("Value", &formatter::format_amount(amount));
                 }
             }
 
-            if let Ok(Some(receipt)) = client.get_transaction_receipt(&hash).await {
+            if let Some(receipt) = receipt {
                 if let Some(status) = receipt.get("status").and_then(|v| v.as_str()) {
-                    let exec_status = if status == "0x1" {
-                        "Success".green()
+                    let rendered = if status == "0x1" {
+                        "SUCCESS".green().bold()
                     } else {
-                        "Failed".red()
+                        "FAILED".red().bold()
                     };
-                    println!("  {}  {}", "Exec".dimmed(), exec_status);
+                    formatter::key_value_colored("Execution", rendered);
                 }
             }
             println!();
         }
         Ok(None) => {
-            println!();
-            println!("  {} Transaction not found", "!".yellow());
-            println!("  {}  {}", "Hash".dimmed(), hash.dimmed());
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": false,
+                    "action": "tx_status",
+                    "hash": hash,
+                    "error": "transaction not found",
+                }));
+            }
+            formatter::warning("Transaction not found.");
+            formatter::key_value("Hash", &hash);
             println!();
         }
         Err(e) => {
-            println!();
-            println!("  {} Query failed: {}", "✗".red(), e);
+            if output::json_enabled() {
+                return output::emit_json(serde_json::json!({
+                    "ok": false,
+                    "action": "tx_status",
+                    "hash": hash,
+                    "error": e.to_string(),
+                }));
+            }
+            formatter::error(&format!("Transaction lookup failed: {e}"));
             println!();
         }
     }
@@ -384,63 +463,62 @@ pub async fn check_status(hash: &str, rpc_url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Decode a raw transaction
+/// Decode a raw transaction.
 pub fn decode_transaction(raw_tx: &str) -> Result<()> {
-    let hex_str = raw_tx.strip_prefix("0x").unwrap_or(raw_tx);
-    let tx_bytes = hex::decode(hex_str).map_err(|_| anyhow!("Invalid hex encoding"))?;
+    let tx_bytes =
+        hex::decode(raw_tx.trim_start_matches("0x")).map_err(|_| anyhow!("Invalid hex encoding"))?;
 
-    let tx: Transaction =
-        borsh::from_slice(&tx_bytes).map_err(|e| anyhow!("Failed to decode transaction: {}", e))?;
+    let tx: Transaction = borsh::from_slice(&tx_bytes)
+        .map_err(|e| anyhow!("Failed to decode transaction: {e}"))?;
 
-    println!();
-    println!("  {}", "Decoded Transaction".bold().cyan());
-    println!("  {}", "─".repeat(50).dimmed());
-    println!("  {}  0x{}", "Hash".dimmed(), hex::encode(tx.hash()));
-    println!("  {}  {:?}", "Kind".dimmed(), tx.kind);
-    println!("  {}  {}", "From".dimmed(), tx.from);
-    println!("  {}  {}", "To".dimmed(), tx.to);
-    println!("  {}  {} LAT", "Amount".dimmed(), format_amount(tx.amount).green());
-    println!("  {}  {} LAT", "Fee".dimmed(), format_amount(tx.fee));
-    println!("  {}  {}", "Nonce".dimmed(), tx.nonce);
-    println!("  {}  {}", "Gas".dimmed(), tx.gas_limit);
+    if output::json_enabled() {
+        return output::emit_json(serde_json::json!({
+            "ok": true,
+            "action": "tx_decode",
+            "hash": format!("0x{}", hex::encode(tx.hash())),
+            "kind": format!("{:?}", tx.kind),
+            "from": tx.from.to_string(),
+            "to": tx.to.to_string(),
+            "amount_latt": tx.amount,
+            "fee_latt": tx.fee,
+            "nonce": tx.nonce,
+            "gas": tx.gas_limit,
+            "data_bytes": tx.data.len(),
+            "signature_present": tx.is_signed(),
+            "signature_valid": tx.verify_signature(),
+        }));
+    }
+
+    formatter::title("Decoded Transaction");
+    formatter::divider();
+    formatter::key_value("Hash", &format!("0x{}", hex::encode(tx.hash())));
+    formatter::key_value("Kind", &format!("{:?}", tx.kind));
+    formatter::key_value("From", &tx.from.to_string());
+    formatter::key_value("To", &tx.to.to_string());
+    formatter::key_value("Amount", &formatter::format_amount(tx.amount));
+    formatter::key_value("Fee", &formatter::format_amount(tx.fee));
+    formatter::key_value("Nonce", &tx.nonce.to_string());
+    formatter::key_value("Gas", &tx.gas_limit.to_string());
 
     if !tx.data.is_empty() {
-        println!("  {}  {} bytes", "Data".dimmed(), tx.data.len());
+        formatter::key_value("Data", &format!("{} bytes", tx.data.len()));
     }
 
     if tx.is_signed() {
-        let sig_status = if tx.verify_signature() {
-            "Valid".green()
+        if tx.verify_signature() {
+            formatter::key_value_colored("Signature", "VALID".green().bold());
         } else {
-            "Invalid".red()
-        };
-        println!("  {}  {}", "Sig".dimmed(), sig_status);
+            formatter::key_value_colored("Signature", "INVALID".red().bold());
+        }
     } else {
-        println!("  {}  {}", "Sig".dimmed(), "None".dimmed());
+        formatter::key_value("Signature", "not present");
     }
-    println!();
 
+    println!();
     Ok(())
 }
 
-/// Format amount in LAT (8 decimals)
-fn format_amount(amount: u128) -> String {
-    use lattice_core::tokenomics::LATT_PER_LAT;
-    
-    let whole = amount / LATT_PER_LAT;
-    let frac = amount % LATT_PER_LAT;
-
-    if frac == 0 {
-        format!("{}", whole)
-    } else {
-        let frac_str = format!("{:08}", frac);
-        let trimmed = frac_str.trim_end_matches('0');
-        format!("{}.{}", whole, trimmed)
-    }
-}
-
-/// Parse hex string to u128
 fn parse_hex_u128(s: &str) -> Result<u128> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    u128::from_str_radix(s, 16).map_err(|e| anyhow!("Invalid hex number: {}", e))
+    u128::from_str_radix(s.trim_start_matches("0x"), 16)
+        .map_err(|e| anyhow!("Invalid hex number: {e}"))
 }

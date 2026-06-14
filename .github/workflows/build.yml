@@ -153,23 +153,22 @@ jobs:
             target
           key: ${{ runner.os }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build release binaries
-        run: cargo build --release --target ${{ matrix.target }} --bins
+      - name: Build official unified binary
+        run: cargo build --release --target ${{ matrix.target }} --bin lattice
 
-      - name: Package binaries (Unix)
+      - name: Package binary (Unix)
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ${{ github.workspace }}/${{ matrix.artifact_name }}.tar.gz \
-            lattice-node lattice-cli lattice-miner
+          tar czf ${{ github.workspace }}/${{ matrix.artifact_name }}.tar.gz lattice
 
-      - name: Package binaries (Windows)
+      - name: Package binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $dir = "target\${{ matrix.target }}\release"
           Compress-Archive `
-            -Path "$dir\lattice-node.exe","$dir\lattice-cli.exe","$dir\lattice-miner.exe" `
+            -Path "$dir\lattice.exe" `
             -DestinationPath "${{ github.workspace }}\${{ matrix.artifact_name }}.zip"
 
       - name: Upload artifacts

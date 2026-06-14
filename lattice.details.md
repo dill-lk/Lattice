@@ -1,5 +1,8 @@
 # 💠 Lattice Technical Specifications & Economic Blueprint
 
+> Historical note: this file contains an older economic / protocol sketch and is not the current source of truth. Prefer `README.md`, `TOKENOMICS.md`, `CURRENT_STATUS.md`, and `docs/whitepaper.md`.
+
+
 **Project Codename:** Lattice  
 **Author:** Dill (Jinuk Chanthusa)  
 **Version:** 1.0.0-Alpha  

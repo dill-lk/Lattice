@@ -8,7 +8,8 @@ use lattice_consensus::{verify_pow, PoWConfig};
 use lattice_core::tokenomics::BLOCK_REWARD;
 use lattice_core::validation::execute_transaction as execute_tx_to_state;
 use lattice_core::{Account, Address, Amount, Block, BlockHeader, BlockHeight, Hash, State, Transaction};
-use parking_lot::RwLock;
+use lattice_vm::{BlockContext, Runtime};
+use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,6 +31,8 @@ pub struct PeerSnapshot {
 }
 
 pub struct ChainState {
+    /// Runtime mirror used for read-only contract calls.
+    pub runtime: Option<Arc<Mutex<Runtime>>>,
     /// Blocks indexed by height
     pub blocks_by_height: HashMap<BlockHeight, Block>,
     /// Blocks indexed by hash
@@ -74,6 +77,7 @@ impl ChainState {
         blocks_by_hash.insert(genesis_hash, genesis);
 
         Self {
+            runtime: None,
             blocks_by_height,
             blocks_by_hash,
             transactions: HashMap::new(),
@@ -166,6 +170,8 @@ impl RpcHandlers {
             "lat_blockNumber" => self.lat_block_number(),
             "lat_syncStatus" => self.lat_sync_status(),
             "lat_peerInfo" => self.lat_peer_info(),
+            "lat_nodeInfo" => self.lat_node_info(),
+            "lat_networkInfo" => self.lat_network_info(),
             "lat_getBlockByNumber" => self.lat_get_block_by_number(params),
             "lat_getBlockByHash" => self.lat_get_block_by_hash(params),
             "lat_getTransactionByHash" => self.lat_get_transaction_by_hash(params),
@@ -210,6 +216,34 @@ impl RpcHandlers {
             "latency_ms": peer.latency_ms,
             "score": peer.score,
         })).collect::<Vec<_>>()))
+    }
+
+    /// lat_nodeInfo - Return a compact node/operator status payload.
+    pub fn lat_node_info(&self) -> Result<Value> {
+        let state = self.state.read();
+        Ok(json!({
+            "height": format!("0x{:x}", state.height),
+            "syncing": state.syncing,
+            "currentBlock": format!("0x{:x}", state.sync_current),
+            "highestBlock": format!("0x{:x}", state.sync_target.max(state.sync_current)),
+            "pendingTxs": state.pending_txs.len(),
+            "peerCount": state.peer_infos.len(),
+        }))
+    }
+
+    /// lat_networkInfo - Return network-facing information for dashboards / tooling.
+    pub fn lat_network_info(&self) -> Result<Value> {
+        let state = self.state.read();
+        Ok(json!({
+            "peerCount": state.peer_infos.len(),
+            "peers": state.peer_infos.iter().map(|peer| json!({
+                "id": peer.id,
+                "address": peer.address,
+                "latency_ms": peer.latency_ms,
+                "score": peer.score,
+            })).collect::<Vec<_>>(),
+            "syncing": state.syncing,
+        }))
     }
 
     /// lat_getBlockByNumber - Get block by height
@@ -373,12 +407,17 @@ impl RpcHandlers {
         let tx_bytes =
             hex::decode(tx_hex).map_err(|_| RpcError::invalid_params("Invalid hex encoding"))?;
 
-        let tx: Transaction = borsh::from_slice(&tx_bytes)
-            .map_err(|_| RpcError::invalid_transaction("Failed to decode transaction"))?;
+        let tx: Transaction = borsh::from_slice(&tx_bytes).map_err(|_| {
+            RpcError::invalid_transaction("Failed to decode transaction")
+                .with_data(json!({"reason": "borsh_decode_failed"}))
+        })?;
 
         // Validate transaction
         if !tx.verify_signature() {
-            return Err(RpcError::invalid_transaction("Invalid signature"));
+            return Err(
+                RpcError::invalid_transaction("Invalid signature")
+                    .with_data(json!({"reason": "signature_verification_failed"})),
+            );
         }
 
         let tx_hash = tx.hash();
@@ -448,12 +487,72 @@ impl RpcHandlers {
             return Err(RpcError::invalid_params("Missing call object"));
         }
 
-        let _call_req: CallRequest = serde_json::from_value(params[0].clone())
+        let call_req: CallRequest = serde_json::from_value(params[0].clone())
             .map_err(|_| RpcError::invalid_params("Invalid call request"))?;
 
-        // Simplified implementation - would integrate with VM for actual execution
-        // For now, return empty result
-        Ok(json!("0x"))
+        let contract = Address::from_base58(&call_req.to)
+            .map_err(|_| RpcError::invalid_params("Invalid contract address"))?;
+        let caller = match call_req.from.as_deref() {
+            Some(from) => Address::from_base58(from)
+                .map_err(|_| RpcError::invalid_params("Invalid caller address"))?,
+            None => Address::zero(),
+        };
+        let input = call_req
+            .data
+            .as_deref()
+            .map(|data| hex::decode(data.strip_prefix("0x").unwrap_or(data)))
+            .transpose()
+            .map_err(|_| RpcError::invalid_params("Invalid call data hex"))?
+            .unwrap_or_default();
+        let gas_limit = call_req.gas.unwrap_or(1_000_000);
+
+        let runtime = {
+            let state = self.state.read();
+            state
+                .runtime
+                .clone()
+                .ok_or_else(|| {
+                    RpcError::internal_error("VM runtime not attached to RPC state")
+                        .with_data(json!({"reason": "runtime_missing"}))
+                })?
+        };
+
+        let block = {
+            let state = self.state.read();
+            state.blocks_by_height.get(&state.height).cloned()
+        };
+        let block_ctx = if let Some(block) = block {
+            BlockContext {
+                height: block.header.height,
+                timestamp: block.header.timestamp,
+                difficulty: block.header.difficulty,
+                gas_limit: 10_000_000,
+                coinbase: block.header.coinbase.clone(),
+                prev_hash: block.header.prev_hash,
+            }
+        } else {
+            BlockContext::default()
+        };
+
+        let mut runtime = runtime.lock();
+        let result = runtime.static_call(contract, caller, input, gas_limit, block_ctx).map_err(|e| {
+            RpcError::internal_error(format!("VM call failed: {}", e))
+                .with_data(json!({"reason": "static_call_error"}))
+        })?;
+
+        if !result.success {
+            return Err(
+                RpcError::execution_error(
+                    result.error.clone().unwrap_or_else(|| "contract call failed".to_string()),
+                )
+                .with_data(json!({
+                    "reason": "contract_execution_failed",
+                    "gas_used": result.gas_used,
+                })),
+            );
+        }
+
+        Ok(json!(format!("0x{}", hex::encode(result.return_data))))
     }
 
     /// lat_getWork - Get a mining work template

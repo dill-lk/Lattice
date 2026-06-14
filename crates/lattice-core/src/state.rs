@@ -155,6 +155,7 @@ impl State {
             hasher.update(account.balance.to_le_bytes());
             hasher.update(account.nonce.to_le_bytes());
             hasher.update(account.code_hash);
+            hasher.update(account.storage_root);
         }
 
         let mut hash = [0u8; 32];

@@ -12,7 +12,7 @@ use std::time::Duration;
 use anyhow::Context;
 use libp2p::futures::StreamExt;
 use libp2p::{identity, noise, swarm::SwarmEvent, tcp, yamux, Multiaddr, PeerId, SwarmBuilder};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use tokio::sync::{broadcast, mpsc};
 use tracing_subscriber::EnvFilter;
 
@@ -165,7 +165,7 @@ pub struct NodeState {
     /// Difficulty adjuster
     pub difficulty: Arc<DifficultyAdjuster>,
     /// VM runtime for contract execution
-    pub vm_runtime: Arc<Runtime>,
+    pub vm_runtime: Arc<Mutex<Runtime>>,
     /// Event broadcaster
     pub event_tx: broadcast::Sender<NodeEvent>,
     /// PoW configuration for block verification
@@ -282,6 +282,132 @@ fn persist_state(state_store: &StateStore, state: &State) -> anyhow::Result<()> 
         .map_err(|e| anyhow::anyhow!("Failed to persist updated state: {e}"))
 }
 
+fn block_context_from_header(header: &BlockHeader) -> lattice_vm::BlockContext {
+    lattice_vm::BlockContext {
+        height: header.height,
+        timestamp: header.timestamp,
+        difficulty: header.difficulty,
+        gas_limit: 10_000_000,
+        coinbase: header.coinbase.clone(),
+        prev_hash: header.prev_hash,
+    }
+}
+
+fn seed_runtime_from_state_snapshot(
+    runtime: &mut Runtime,
+    state_store: &StateStore,
+    chain_state: &State,
+) -> anyhow::Result<()> {
+    runtime.reset_chain_view();
+
+    for (address, account) in chain_state.iter_accounts() {
+        runtime.set_balance(address, account.balance);
+        if account.is_contract() {
+            if let Some(code) = state_store
+                .get_code(&account.code_hash)
+                .map_err(|e| anyhow::anyhow!("Failed to load contract code for {}: {}", address, e))?
+            {
+                runtime
+                    .register_contract(address.clone(), code)
+                    .map_err(|e| anyhow::anyhow!("Failed to register runtime contract {}: {}", address, e))?;
+            }
+            if let Some(storage) = state_store
+                .get_contract_storage(address)
+                .map_err(|e| anyhow::anyhow!("Failed to load contract storage for {}: {}", address, e))?
+            {
+                runtime.set_contract_storage(address, storage);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn sync_runtime_from_node_state(state: &NodeState) -> anyhow::Result<()> {
+    let chain_state = load_current_state(&state.state_store)?;
+    let mut runtime = state.vm_runtime.lock();
+    seed_runtime_from_state_snapshot(&mut runtime, &state.state_store, &chain_state)
+}
+
+fn apply_contract_effects(
+    state_store: &StateStore,
+    state_snapshot: &mut State,
+    block: &Block,
+    persist_runtime_state: bool,
+) -> anyhow::Result<()> {
+    let mut runtime = Runtime::new();
+    seed_runtime_from_state_snapshot(&mut runtime, state_store, state_snapshot)?;
+    let block_ctx = block_context_from_header(&block.header);
+
+    for tx in &block.transactions {
+        match tx.kind {
+            lattice_core::TransactionKind::Deploy => {
+                let deployment = runtime
+                    .deploy(
+                        tx.data.clone(),
+                        tx.from.clone(),
+                        tx.amount,
+                        tx.gas_limit,
+                        block_ctx.clone(),
+                        Vec::new(),
+                    )
+                    .map_err(|e| anyhow::anyhow!("Contract deployment failed: {}", e))?;
+
+                if persist_runtime_state {
+                    state_store
+                        .put_code(&deployment.code_hash, &tx.data)
+                        .map_err(|e| anyhow::anyhow!("Failed to persist deployed code: {}", e))?;
+                }
+
+                let mut account = state_snapshot.get_account(&deployment.address);
+                account.code_hash = deployment.code_hash;
+                account.storage_root = runtime.contract_storage_root(&deployment.address);
+                state_snapshot.set_account(deployment.address.clone(), account);
+
+                let storage = runtime.contract_storage_snapshot(&deployment.address);
+                if persist_runtime_state {
+                    state_store
+                        .put_contract_storage(&deployment.address, &storage)
+                        .map_err(|e| anyhow::anyhow!("Failed to persist deployed storage: {}", e))?;
+                }
+            }
+            lattice_core::TransactionKind::Call => {
+                let result = runtime
+                    .call(
+                        tx.to.clone(),
+                        tx.from.clone(),
+                        tx.amount,
+                        tx.data.clone(),
+                        tx.gas_limit,
+                        block_ctx.clone(),
+                    )
+                    .map_err(|e| anyhow::anyhow!("Contract call failed: {}", e))?;
+
+                if !result.success {
+                    anyhow::bail!(
+                        "Contract call returned failure: {}",
+                        result.error.unwrap_or_else(|| "unknown contract failure".to_string())
+                    );
+                }
+
+                let mut account = state_snapshot.get_account(&tx.to);
+                account.storage_root = runtime.contract_storage_root(&tx.to);
+                state_snapshot.set_account(tx.to.clone(), account);
+
+                let storage = runtime.contract_storage_snapshot(&tx.to);
+                if persist_runtime_state {
+                    state_store
+                        .put_contract_storage(&tx.to, &storage)
+                        .map_err(|e| anyhow::anyhow!("Failed to persist contract storage: {}", e))?;
+                }
+            }
+            lattice_core::TransactionKind::Transfer => {}
+        }
+    }
+
+    Ok(())
+}
+
 fn apply_block_to_chain(state: &NodeState, block: &Block) -> anyhow::Result<Hash> {
     let pre_state = load_current_state(&state.state_store)?;
     let parent_block = if block.header.height == 0 {
@@ -308,8 +434,9 @@ fn apply_block_to_chain(state: &NodeState, block: &Block) -> anyhow::Result<Hash
         anyhow::bail!("Invalid proof of work");
     }
 
-    let post_state = execute_block_to_state(block, pre_state)
+    let mut post_state = execute_block_to_state(block, pre_state)
         .map_err(|e| anyhow::anyhow!("Block execution failed: {e}"))?;
+    apply_contract_effects(&state.state_store, &mut post_state, block, true)?;
     let computed_state_root = post_state.root();
 
     if block.header.state_root != computed_state_root {
@@ -480,7 +607,6 @@ async fn build_block_template(state: &NodeState, coinbase: Address) -> anyhow::R
         .ok_or_else(|| anyhow::anyhow!("Coinbase reward overflow while building block template"))?;
 
     let tx_root = Block::calculate_tx_root(&selected_txs);
-    let state_root = working_state.root();
 
     let difficulty = match state.network {
         Network::Mainnet => {
@@ -537,17 +663,24 @@ async fn build_block_template(state: &NodeState, coinbase: Address) -> anyhow::R
             .unwrap_or(1),
     };
 
-    let header = BlockHeader {
+    let mut header = BlockHeader {
         version: 1,
         height: parent_height + 1,
         prev_hash: parent_hash,
         tx_root,
-        state_root,
+        state_root: [0u8; 32],
         timestamp,
         difficulty,
         nonce: 0,
         coinbase,
     };
+
+    let temp_block = Block {
+        header: header.clone(),
+        transactions: selected_txs.clone(),
+    };
+    apply_contract_effects(&state.state_store, &mut working_state, &temp_block, false)?;
+    header.state_root = working_state.root();
 
     Ok(Block {
         header,
@@ -716,10 +849,12 @@ async fn start_rpc_server(config: config::RpcConfig, state: Arc<NodeState>) -> a
 
 /// Refresh the live RPC-visible chain state from the node state.
 fn refresh_rpc_state_from_node(state: &NodeState) -> anyhow::Result<()> {
+    sync_runtime_from_node_state(state)?;
     let mut chain_state = ChainState::with_pow_config(state.pow_config.clone());
+    chain_state.runtime = Some(state.vm_runtime.clone());
 
     let height = state.height();
-    for h in height.saturating_sub(100)..=height {
+    for h in 0..=height {
         if let Ok(Some(block)) = state.block_store.get_by_height(h) {
             let hash = sha3_256(&borsh::to_vec(&block.header)?);
             for tx in &block.transactions {
@@ -1094,17 +1229,29 @@ async fn start_networking(
                             state.emit_event(NodeEvent::PeerDisconnected(peer_id.to_string()));
                         }
                         SwarmEvent::Behaviour(NetworkBehaviorEvent::Gossipsub(event)) => {
-                            if let Some(net_event) = swarm.behaviour().process_gossipsub_event(event) {
+                            let parsed = {
+                                let behaviour = swarm.behaviour();
+                                behaviour.process_gossipsub_event(event)
+                            };
+                            if let Some(net_event) = parsed {
                                 handle_p2p_event(net_event, &state, swarm.behaviour_mut(), &peer_manager, &sync, None);
                             }
                         }
                         SwarmEvent::Behaviour(NetworkBehaviorEvent::Mdns(event)) => {
-                            for net_event in swarm.behaviour().process_mdns_event(event) {
+                            let parsed = {
+                                let behaviour = swarm.behaviour();
+                                behaviour.process_mdns_event(event)
+                            };
+                            for net_event in parsed {
                                 handle_p2p_event(net_event, &state, swarm.behaviour_mut(), &peer_manager, &sync, None);
                             }
                         }
                         SwarmEvent::Behaviour(NetworkBehaviorEvent::Sync(event)) => {
-                            if let Some((net_event, response_channel)) = swarm.behaviour().process_sync_event(event) {
+                            let parsed = {
+                                let behaviour = swarm.behaviour();
+                                behaviour.process_sync_event(event)
+                            };
+                            if let Some((net_event, response_channel)) = parsed {
                                 handle_p2p_event(net_event, &state, swarm.behaviour_mut(), &peer_manager, &sync, response_channel);
                             }
                         }
@@ -1260,7 +1407,7 @@ pub async fn run_node(args: NodeArgs) -> anyhow::Result<()> {
             ),
             _ => DifficultyAdjuster::new(),
         }),
-        vm_runtime: Arc::new(Runtime::new()),
+        vm_runtime: Arc::new(Mutex::new(Runtime::new())),
         event_tx: event_tx.clone(),
         pow_config,
     });

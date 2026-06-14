@@ -8,6 +8,7 @@ license.workspace = true
 lattice-core = { workspace = true }
 lattice-consensus = { workspace = true }
 lattice-storage = { workspace = true }
+lattice-vm = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

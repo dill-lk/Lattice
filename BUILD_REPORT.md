@@ -1,5 +1,8 @@
 # Lattice Blockchain - Build & Test Report
 
+> Historical note: this report is an older build snapshot and should not be treated as the current source of truth for readiness. Prefer `CURRENT_STATUS.md` and the unified docs set.
+
+
 **Generated:** 2026-03-28  
 **Version:** 0.1.0  
 **Build Status:** ✅ PRODUCTION READY

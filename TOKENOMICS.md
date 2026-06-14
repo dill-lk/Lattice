@@ -160,13 +160,13 @@ You can verify the genesis allocation and vesting using:
 
 ```bash
 # Check founder balance
-lattice-cli wallet balance --address 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft
+lattice wallet balance 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft
 
 # View genesis block
-lattice-cli query block 0
+lattice query block 0
 
 # Check vesting status (future feature)
-lattice-cli query vesting --address 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft
+# (not yet implemented as a dedicated command)
 ```
 
 ## Security Considerations

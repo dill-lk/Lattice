@@ -304,6 +304,8 @@ sudo ufw allow 30303/tcp
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Build from source, contribute |
 | [docs/api-reference.md](docs/api-reference.md) | JSON-RPC API reference |
 | [docs/protocol-baseline.md](docs/protocol-baseline.md) | Canonical roots, validation, tokenomics, and wallet safety baseline |
+| [docs/rollback-strategy.md](docs/rollback-strategy.md) | Rollback / reorg strategy baseline |
+| [docs/vm-scope.md](docs/vm-scope.md) | Honest scope statement for current WASM runtime integration |
 
 ---
 

@@ -408,7 +408,9 @@ impl MempoolStore {
         let mut entries: Vec<_> = index.values().cloned().collect();
 
         // Sort by priority (descending)
-        entries.sort_by(|a, b| b.cmp(a));
+        entries.sort_by_key(|entry| {
+            std::cmp::Reverse((entry.fee_per_gas, entry.fee, std::cmp::Reverse(entry.inserted_at)))
+        });
 
         let mut result = Vec::with_capacity(limit.min(entries.len()));
         for entry in entries.into_iter().take(limit) {

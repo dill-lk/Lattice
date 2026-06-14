@@ -19,6 +19,7 @@ const CF_STATE: &str = "state";
 const CF_SNAPSHOTS: &str = "snapshots";
 const CF_SNAPSHOT_META: &str = "snapshot_meta";
 const CF_CODE: &str = "code";
+const CF_CONTRACT_STORAGE: &str = "contract_storage";
 
 /// StateStore provides persistent storage for account state
 pub struct StateStore {
@@ -39,6 +40,7 @@ impl StateStore {
             ColumnFamilyDescriptor::new(CF_SNAPSHOTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_SNAPSHOT_META, Options::default()),
             ColumnFamilyDescriptor::new(CF_CODE, Options::default()),
+            ColumnFamilyDescriptor::new(CF_CONTRACT_STORAGE, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cfs)?;
@@ -68,6 +70,12 @@ impl StateStore {
 
     fn cf_code(&self) -> &ColumnFamily {
         self.db.cf_handle(CF_CODE).expect("CF_CODE must exist")
+    }
+
+    fn cf_contract_storage(&self) -> &ColumnFamily {
+        self.db
+            .cf_handle(CF_CONTRACT_STORAGE)
+            .expect("CF_CONTRACT_STORAGE must exist")
     }
 
     /// Get account by address
@@ -130,6 +138,7 @@ impl StateStore {
     pub fn delete_account(&self, address: &Address) -> Result<()> {
         let cf = self.cf_state();
         self.db.delete_cf(cf, address.as_bytes())?;
+        let _ = self.delete_contract_storage(address);
         *self.state_root_cache.write() = None;
         Ok(())
     }
@@ -151,6 +160,42 @@ impl StateStore {
     pub fn get_code(&self, code_hash: &Hash) -> Result<Option<Vec<u8>>> {
         let cf = self.cf_code();
         Ok(self.db.get_cf(cf, code_hash)?)
+    }
+
+    /// Persist full contract storage for an address.
+    pub fn put_contract_storage(
+        &self,
+        address: &Address,
+        storage: &std::collections::HashMap<Vec<u8>, Vec<u8>>,
+    ) -> Result<()> {
+        let cf = self.cf_contract_storage();
+        let encoded = borsh::to_vec(storage)
+            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+        self.db.put_cf(cf, address.as_bytes(), encoded)?;
+        Ok(())
+    }
+
+    /// Load full contract storage for an address.
+    pub fn get_contract_storage(
+        &self,
+        address: &Address,
+    ) -> Result<Option<std::collections::HashMap<Vec<u8>, Vec<u8>>>> {
+        let cf = self.cf_contract_storage();
+        match self.db.get_cf(cf, address.as_bytes())? {
+            Some(bytes) => {
+                let storage = std::collections::HashMap::<Vec<u8>, Vec<u8>>::try_from_slice(&bytes)
+                    .map_err(|e| StorageError::Deserialization(e.to_string()))?;
+                Ok(Some(storage))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Delete persisted contract storage for an address.
+    pub fn delete_contract_storage(&self, address: &Address) -> Result<()> {
+        let cf = self.cf_contract_storage();
+        self.db.delete_cf(cf, address.as_bytes())?;
+        Ok(())
     }
 
     /// Compute state root from current state using the same canonical logic as
@@ -485,7 +530,7 @@ mod tests {
         let (store, _dir) = create_test_store();
         let code = b"contract bytecode";
         let code_hash = {
-            use sha3::Digest;
+            use sha3::{Digest, Sha3_256};
             let mut hash = [0u8; 32];
             hash.copy_from_slice(&Sha3_256::digest(code));
             hash
@@ -520,5 +565,17 @@ mod tests {
         let loaded = store.load_state().unwrap();
         assert_eq!(loaded.balance(&address), 777);
         assert_eq!(store.compute_state_root().unwrap(), state.root());
+    }
+
+    #[test]
+    fn test_contract_storage_roundtrip() {
+        let (store, _dir) = create_test_store();
+        let address = Address::from_bytes([4u8; 20]);
+        let mut storage = std::collections::HashMap::new();
+        storage.insert(b"key".to_vec(), b"value".to_vec());
+
+        store.put_contract_storage(&address, &storage).unwrap();
+        let loaded = store.get_contract_storage(&address).unwrap().unwrap();
+        assert_eq!(loaded.get(b"key" as &[u8]), Some(&b"value".to_vec()));
     }
 }

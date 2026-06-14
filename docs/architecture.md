@@ -1,232 +1,86 @@
 # Lattice Architecture
 
-## Overview
+This document describes the current high-level architecture of Lattice after the unified CLI transition.
 
-Lattice is structured as a Cargo workspace with multiple crates, each handling a specific concern. This document describes the high-level architecture and data flow.
+## 1. Product Entry Point
 
-## Component Diagram
+The official user-facing executable is:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         APPLICATIONS                             │
-├──────────────────┬──────────────────┬───────────────────────────┤
-│   lattice-node   │   lattice-cli    │     lattice-miner         │
-│   (Full Node)    │   (Wallet CLI)   │   (Mining Client)         │
-└────────┬─────────┴────────┬─────────┴───────────┬───────────────┘
-         │                  │                     │
-         ▼                  ▼                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         SERVICES                                 │
-├─────────────────┬─────────────────┬─────────────────────────────┤
-│  lattice-rpc    │ lattice-network │    lattice-consensus        │
-│  (JSON-RPC)     │  (P2P Layer)    │    (PoW Engine)             │
-└────────┬────────┴────────┬────────┴───────────┬─────────────────┘
-         │                 │                    │
-         ▼                 ▼                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                          CORE                                    │
-├──────────────────┬──────────────────┬───────────────────────────┤
-│ lattice-storage  │   lattice-vm     │    lattice-wallet         │
-│ (RocksDB)        │   (WASM)         │    (Keys/Signing)         │
-└────────┬─────────┴────────┬─────────┴───────────┬───────────────┘
-         │                  │                     │
-         ▼                  ▼                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       PRIMITIVES                                 │
-├─────────────────────────────┬───────────────────────────────────┤
-│        lattice-core         │        lattice-crypto             │
-│  (Block, Tx, State, Addr)   │  (Dilithium, Kyber, SHA3)        │
-└─────────────────────────────┴───────────────────────────────────┘
+```text
+lattice
 ```
 
-## Data Flow
+It provides:
+- top-level quick actions (`lattice`, `--node`, `--mine`, `--wallet-new`, `--balance`, `--send`)
+- advanced subcommands (`node`, `miner`, `wallet`, `tx`, `query`, `contract`, `doctor`, `chain`, `mempool`)
 
-### Transaction Lifecycle
+Legacy binaries remain compatibility wrappers only.
 
-```
-1. User creates transaction
-   └─► lattice-wallet: TransactionBuilder
-       └─► Sign with Dilithium keypair
-   
-2. Submit to network
-   └─► lattice-rpc: lat_sendRawTransaction
-       └─► Validate signature & balance
-       └─► Add to mempool
-   
-3. Propagate to peers
-   └─► lattice-network: GossipSub publish
-       └─► All peers receive and validate
-   
-4. Include in block
-   └─► lattice-consensus: Miner
-       └─► Select from mempool by fee
-       └─► Build block template
-   
-5. Mine block
-   └─► PoW: Find nonce where hash < target
-       └─► Memory-hard computation (Argon2)
-   
-6. Broadcast block
-   └─► lattice-network: GossipSub publish
-       └─► Peers validate and apply
-   
-7. Update state
-   └─► lattice-storage: Apply block
-       └─► Update account balances
-       └─► Remove txs from mempool
-```
+## 2. Workspace Modules
 
-### Block Synchronization
+### Core modules
+- `lattice-core` — blocks, transactions, state, validation, tokenomics
+- `lattice-crypto` — Dilithium, Kyber, SHA3
+- `lattice-consensus` — Argon2-based memory-hard PoW
+- `lattice-storage` — RocksDB persistence, state snapshots, contract code storage
+- `lattice-vm` — WASM runtime and host functions
+- `lattice-rpc` — JSON-RPC server and handlers
+- `lattice-network` — libp2p behaviour, peer manager, sync manager
+- `lattice-wallet` — keystore and transaction builder
 
-```
-1. New peer connects
-   └─► lattice-network: Handshake
-       └─► Exchange chain tips
-   
-2. Identify missing blocks
-   └─► Compare block heights
-       └─► Request headers first
-   
-3. Download headers
-   └─► Validate PoW difficulty
-       └─► Build header chain
-   
-4. Download blocks
-   └─► Parallel block fetching
-       └─► Validate transactions
-   
-5. Apply blocks
-   └─► lattice-storage: Sequential application
-       └─► Update state root
-```
+### Unified application layer
+- `bins/lattice` — official all-in-one CLI / node / miner entrypoint
 
-## State Management
+## 3. State Flow
 
-### Account Model
+Canonical state handling in the unified node path is:
+1. load state snapshot from storage
+2. validate block with core validation
+3. execute transactions through core execution path
+4. apply contract lifecycle effects (where integrated)
+5. compute and verify state root
+6. persist updated state
+7. create snapshot for rollback / reorg support
 
-```
-Account {
-    balance: u128,      // Token balance
-    nonce: u64,         // Transaction count
-    code_hash: [u8;32], // Contract code (if any)
-    storage_root: Hash, // Contract storage root
-}
-```
+## 4. Networking Flow
 
-### State Storage
+The unified node path now includes:
+- libp2p swarm setup
+- gossip topic subscription
+- request-response sync wiring
+- peer-manager integration
+- sync-manager integration
+- peer snapshots surfaced through RPC/operator UX
 
-- Uses RocksDB with column families:
-  - `blocks` - Block data by hash
-  - `block_index` - Hash by height
-  - `state` - Account data by address
-  - `code` - Contract bytecode
-  - `storage` - Contract storage
+This is real networking integration, but it is still considered alpha-hardening territory rather than final production maturity.
 
-### State Transitions
+## 5. RPC Layer
 
-```rust
-fn apply_transaction(state: &mut State, tx: &Transaction) -> Result<()> {
-    // 1. Verify signature
-    verify_signature(&tx)?;
-    
-    // 2. Check nonce
-    let sender = state.get_account(&tx.from);
-    ensure!(sender.nonce == tx.nonce);
-    
-    // 3. Check balance
-    let cost = tx.amount + tx.fee;
-    ensure!(sender.balance >= cost);
-    
-    // 4. Deduct from sender
-    state.transfer(&tx.from, &tx.to, tx.amount)?;
-    state.sub_balance(&tx.from, tx.fee);
-    
-    // 5. Execute contract (if applicable)
-    if tx.kind == TransactionKind::Call {
-        execute_contract(state, tx)?;
-    }
-    
-    // 6. Increment nonce
-    state.increment_nonce(&tx.from);
-    
-    Ok(())
-}
-```
+The RPC layer exposes:
+- chain height / block lookup
+- transaction lookup / receipt lookup
+- balance / nonce queries
+- mempool stats
+- node/network status payloads
+- mining work submission
+- read-only VM-backed contract call path
 
-## Network Protocol
+## 6. Smart Contract Scope
 
-### Message Types
+Current honest statement:
+- WASM runtime infrastructure exists
+- read-only VM call plumbing exists through RPC
+- deeper end-to-end deploy/call persistence is still being hardened
 
-| Type | Direction | Description |
-|------|-----------|-------------|
-| `Status` | Both | Chain tip exchange |
-| `NewBlock` | Broadcast | Announce new block |
-| `NewTransaction` | Broadcast | Announce new tx |
-| `GetHeaders` | Request | Request header range |
-| `Headers` | Response | Header batch |
-| `GetBlocks` | Request | Request block bodies |
-| `Blocks` | Response | Block batch |
+See also:
+- `docs/vm-scope.md`
+- `docs/rollback-strategy.md`
+- `docs/protocol-baseline.md`
 
-### GossipSub Topics
+## 7. Architectural Status
 
-- `/lattice/1/blocks` - New block announcements
-- `/lattice/1/transactions` - New transaction announcements
-
-## Smart Contract Execution
-
-### WASM Runtime
-
-```
-┌─────────────────────────────────────┐
-│           Host Environment          │
-│  ┌─────────────────────────────┐   │
-│  │        GasMeter             │   │
-│  └─────────────────────────────┘   │
-│  ┌─────────────────────────────┐   │
-│  │     Host Functions          │   │
-│  │  - storage_read/write       │   │
-│  │  - get_caller               │   │
-│  │  - get_block_number         │   │
-│  │  - sha3                     │   │
-│  │  - emit_event               │   │
-│  └─────────────────────────────┘   │
-│              │                      │
-│              ▼                      │
-│  ┌─────────────────────────────┐   │
-│  │    WASM Module (Contract)   │   │
-│  │    - Linear Memory          │   │
-│  │    - Function Exports       │   │
-│  └─────────────────────────────┘   │
-└─────────────────────────────────────┘
-```
-
-### Gas Metering
-
-Gas is charged for:
-- Each WASM opcode (weighted by cost)
-- Host function calls
-- Memory allocation
-- Storage operations
-
-Execution stops when gas exhausted, with state rolled back.
-
-## Security Considerations
-
-### Quantum Resistance
-
-All cryptographic operations use post-quantum algorithms:
-- **Signatures**: Dilithium3 (3,293 byte signatures)
-- **Key Exchange**: Kyber768 (P2P encryption)
-- **Hashing**: SHA3-256
-
-### Consensus Security
-
-- 51% attack requires majority of memory bandwidth
-- Difficulty adjustment prevents timestamp manipulation
-- Checkpoints for finality (optional)
-
-### Smart Contract Security
-
-- WASM sandboxing prevents host access
-- Gas limits prevent infinite loops
-- Deterministic execution (no floats, no randomness)
+Lattice is currently best described as:
+- modular
+- serious
+- technically differentiated
+- still in alpha hardening before trustworthy public-scale operation

@@ -86,6 +86,69 @@ impl Runtime {
         }
     }
 
+    /// Reset all runtime-visible chain state mirrors.
+    pub fn reset_chain_view(&mut self) {
+        self.store = Store::default();
+        self.module_cache.clear();
+        self.address_code.clear();
+        self.storage.lock().unwrap().clear();
+        self.code.lock().unwrap().clear();
+        self.balances.lock().unwrap().clear();
+    }
+
+    /// Compute a contract code hash.
+    pub fn compute_code_hash(code: &[u8]) -> Hash {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&Sha3_256::digest(code));
+        hash
+    }
+
+    /// Derive a contract address from deployer + code hash.
+    pub fn derive_contract_address(deployer: &Address, code_hash: &Hash) -> Address {
+        let mut hasher = Sha3_256::new();
+        hasher.update(deployer.as_bytes());
+        hasher.update(code_hash);
+        let digest = hasher.finalize();
+        let mut addr = [0u8; 20];
+        addr.copy_from_slice(&digest[..20]);
+        Address::from_bytes(addr)
+    }
+
+    fn compute_storage_root_map(storage: &std::collections::HashMap<Vec<u8>, Vec<u8>>) -> Hash {
+        let mut items: Vec<_> = storage.iter().collect();
+        items.sort_by(|a, b| a.0.cmp(b.0));
+        let mut hasher = Sha3_256::new();
+        for (key, value) in items {
+            hasher.update((key.len() as u32).to_le_bytes());
+            hasher.update(key);
+            hasher.update((value.len() as u32).to_le_bytes());
+            hasher.update(value);
+        }
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&hasher.finalize());
+        hash
+    }
+
+    /// Register already-existing contract code at a known address.
+    pub fn register_contract(&mut self, address: Address, code: Vec<u8>) -> Result<Hash> {
+        if code.len() > MAX_CODE_SIZE {
+            return Err(VmError::InvalidModule(format!(
+                "code size {} exceeds max {}",
+                code.len(),
+                MAX_CODE_SIZE
+            )));
+        }
+
+        let code_hash = Self::compute_code_hash(&code);
+        let module = Module::new(&self.store, &code)
+            .map_err(|e| VmError::CompilationError(format!("failed to compile WASM: {}", e)))?;
+
+        self.code.lock().unwrap().insert(code_hash, code);
+        self.module_cache.insert(code_hash, module);
+        self.address_code.insert(address, code_hash);
+        Ok(code_hash)
+    }
+
     /// Deploy a new contract
     pub fn deploy(
         &mut self,
@@ -105,23 +168,9 @@ impl Runtime {
             )));
         }
 
-        // Compute code hash
-        let code_hash = {
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&Sha3_256::digest(&code));
-            hash
-        };
-
-        // Generate contract address from deployer + nonce (simplified)
-        let contract_address = {
-            let mut hasher = Sha3_256::new();
-            hasher.update(deployer.as_bytes());
-            hasher.update(code_hash);
-            let digest = hasher.finalize();
-            let mut addr = [0u8; 20];
-            addr.copy_from_slice(&digest[..20]);
-            Address::from_bytes(addr)
-        };
+        // Compute code hash and deterministic contract address.
+        let code_hash = Self::compute_code_hash(&code);
+        let contract_address = Self::derive_contract_address(&deployer, &code_hash);
 
         debug!(
             code_hash = hex::encode(code_hash),
@@ -373,6 +422,34 @@ impl Runtime {
         // Get return data
         let return_data = env.as_ref(&store).return_data.clone();
         Ok(return_data)
+    }
+
+    /// Set contract storage for a deployed contract address.
+    pub fn set_contract_storage(
+        &mut self,
+        address: &Address,
+        storage: std::collections::HashMap<Vec<u8>, Vec<u8>>,
+    ) {
+        self.storage.lock().unwrap().insert(address.clone(), storage);
+    }
+
+    /// Get a snapshot of full contract storage for an address.
+    pub fn contract_storage_snapshot(
+        &self,
+        address: &Address,
+    ) -> std::collections::HashMap<Vec<u8>, Vec<u8>> {
+        self.storage
+            .lock()
+            .unwrap()
+            .get(address)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Compute the contract storage root for an address.
+    pub fn contract_storage_root(&self, address: &Address) -> Hash {
+        let storage = self.contract_storage_snapshot(address);
+        Self::compute_storage_root_map(&storage)
     }
 
     /// Set balance for an address
@@ -709,5 +786,36 @@ mod tests {
 
         let result = runtime.call(addr, caller, 0, vec![], 100000, BlockContext::default());
         assert!(matches!(result, Err(VmError::ContractNotFound(_))));
+    }
+
+    #[test]
+    fn test_deploy_and_static_call_noop_contract() {
+        let mut runtime = Runtime::new();
+        let deployer = Address::from_bytes([3u8; 20]);
+
+        let wasm = wat::parse_str(
+            r#"(module
+                (func (export \"init\"))
+                (func (export \"call\"))
+            )"#,
+        )
+        .unwrap();
+
+        let deployment = runtime
+            .deploy(wasm, deployer.clone(), 0, 1_000_000, BlockContext::default(), Vec::new())
+            .unwrap();
+        assert!(runtime.has_contract(&deployment.address));
+
+        let result = runtime
+            .static_call(
+                deployment.address,
+                deployer,
+                Vec::new(),
+                1_000_000,
+                BlockContext::default(),
+            )
+            .unwrap();
+
+        assert!(result.success);
     }
 }

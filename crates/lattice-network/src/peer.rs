@@ -341,7 +341,7 @@ impl PeerManager {
             })
             .collect();
 
-        peers.sort_by(|a, b| b.1.cmp(&a.1));
+        peers.sort_by_key(|entry| std::cmp::Reverse(entry.1));
         peers.into_iter().take(count).map(|(id, _)| id).collect()
     }
 
@@ -384,7 +384,7 @@ impl PeerManager {
             .filter(|(_, score)| *score < self.config.min_score)
             .collect();
 
-        peers_with_scores.sort_by(|a, b| a.1.cmp(&b.1));
+        peers_with_scores.sort_by_key(|entry| entry.1);
         peers_with_scores
             .into_iter()
             .take(5) // Prune at most 5 at a time

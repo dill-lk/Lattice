@@ -1,5 +1,8 @@
 # Lattice Blockchain - Advanced Features Complete ✅
 
+> Historical note: this document is an older feature snapshot and may contain optimistic or superseded statements. For current truth, prefer `README.md`, `CURRENT_STATUS.md`, `docs/architecture.md`, and `docs/whitepaper.md`.
+
+
 ## 🎉 Project Status: PRODUCTION READY
 
 ### Code Metrics

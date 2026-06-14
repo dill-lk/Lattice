@@ -1,5 +1,8 @@
 # 🚀 Lattice Blockchain - Production Status
 
+> Historical note: this is an older status snapshot retained for reference. For current truth, prefer `CURRENT_STATUS.md`, `README.md`, and `docs/whitepaper.md`.
+
+
 **Last Updated:** 2024-01-10  
 **Version:** 0.1.0-alpha  
 **Completion:** 96% (27/28 tasks)  

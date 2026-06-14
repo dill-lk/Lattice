@@ -1,278 +1,263 @@
 # Lattice JSON-RPC API Reference
 
-## Overview
+This document reflects the **current implemented RPC surface** used by the unified `lattice` stack.
 
-Lattice exposes a JSON-RPC 2.0 API for interacting with the blockchain. All methods are prefixed with `lat_`.
+Default endpoint:
 
-## Connection
+```text
+http://127.0.0.1:8545
+```
 
-Default endpoint: `http://localhost:8545`
+All methods are prefixed with `lat_`.
 
-## Methods
+---
 
-### Chain Information
+## 1. Chain / Node Status
 
-#### `lat_blockNumber`
+### `lat_blockNumber`
+Returns the current best block height as hex.
 
-Returns the current block height.
+**Params:** `[]`
 
-**Parameters**: None
-
-**Returns**: `string` - Block height as hex
-
-**Example**:
+**Example**
 ```json
-// Request
 {"jsonrpc":"2.0","method":"lat_blockNumber","params":[],"id":1}
-
-// Response
-{"jsonrpc":"2.0","id":1,"result":"0x5b8d80"}
-```
-
-#### `lat_chainId`
-
-Returns the chain ID.
-
-**Parameters**: None
-
-**Returns**: `string` - Chain ID as hex
-
-**Example**:
-```json
-// Request
-{"jsonrpc":"2.0","method":"lat_chainId","params":[],"id":1}
-
-// Response
-{"jsonrpc":"2.0","id":1,"result":"0x1"}
 ```
 
 ---
 
-### Block Methods
+### `lat_syncStatus`
+Returns node-reported sync status.
 
-#### `lat_getBlockByNumber`
+**Params:** `[]`
 
-Returns block by height.
-
-**Parameters**:
-1. `blockNumber`: `string` - Block height as hex, or `"latest"`, `"earliest"`, `"pending"`
-2. `fullTransactions`: `boolean` - If true, return full tx objects; if false, return tx hashes
-
-**Returns**: `object` - Block object
-
-**Example**:
-```json
-// Request
-{"jsonrpc":"2.0","method":"lat_getBlockByNumber","params":["0x1b4", true],"id":1}
-
-// Response
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "number": "0x1b4",
-    "hash": "0x...",
-    "parentHash": "0x...",
-    "timestamp": "0x...",
-    "miner": "0x...",
-    "difficulty": "0x...",
-    "stateRoot": "0x...",
-    "transactionsRoot": "0x...",
-    "transactions": [...]
-  }
-}
-```
-
-#### `lat_getBlockByHash`
-
-Returns block by hash.
-
-**Parameters**:
-1. `blockHash`: `string` - 32-byte block hash
-2. `fullTransactions`: `boolean` - If true, return full tx objects
-
-**Returns**: `object` - Block object or `null`
+**Returns**
+- `syncing`: boolean
+- `currentBlock`: hex string
+- `highestBlock`: hex string
 
 ---
 
-### Account Methods
+### `lat_peerInfo`
+Returns peer snapshots currently visible to the node.
 
-#### `lat_getBalance`
+**Params:** `[]`
 
-Returns account balance.
-
-**Parameters**:
-1. `address`: `string` - Account address
-2. `blockNumber`: `string` - Block number or `"latest"`
-
-**Returns**: `string` - Balance in smallest units (hex)
-
-**Example**:
-```json
-// Request
-{"jsonrpc":"2.0","method":"lat_getBalance","params":["1A2b3C...","latest"],"id":1}
-
-// Response
-{"jsonrpc":"2.0","id":1,"result":"0xde0b6b3a7640000"}
-```
-
-#### `lat_getTransactionCount`
-
-Returns account nonce.
-
-**Parameters**:
-1. `address`: `string` - Account address
-2. `blockNumber`: `string` - Block number or `"latest"`
-
-**Returns**: `string` - Nonce as hex
+**Returns**
+An array of objects with:
+- `id`
+- `address`
+- `latency_ms`
+- `score`
 
 ---
 
-### Transaction Methods
+### `lat_nodeInfo`
+Returns compact operator-oriented node information.
 
-#### `lat_sendRawTransaction`
+**Params:** `[]`
 
+**Returns**
+- `height`
+- `syncing`
+- `currentBlock`
+- `highestBlock`
+- `pendingTxs`
+- `peerCount`
+
+---
+
+### `lat_networkInfo`
+Returns network-facing operator information.
+
+**Params:** `[]`
+
+**Returns**
+- `peerCount`
+- `peers`
+- `syncing`
+
+---
+
+## 2. Block Methods
+
+### `lat_getBlockByNumber`
+Returns a block by height.
+
+**Params**
+1. block number as hex, or tag: `latest`, `earliest`, `pending`
+2. boolean: include full transaction objects
+
+**Example**
+```json
+{"jsonrpc":"2.0","method":"lat_getBlockByNumber","params":["0x1", true],"id":1}
+```
+
+---
+
+### `lat_getBlockByHash`
+Returns a block by hash.
+
+**Params**
+1. block hash
+2. boolean: include full transaction objects
+
+---
+
+## 3. Account Methods
+
+### `lat_getBalance`
+Returns account balance in base units (hex string).
+
+**Params**
+1. address
+
+---
+
+### `lat_getTransactionCount`
+Returns account nonce / transaction count as hex.
+
+**Params**
+1. address
+2. optional block tag (the CLI uses `latest`)
+
+---
+
+### `lat_mempoolStats`
+Returns simple pending-transaction statistics.
+
+**Params:** `[]`
+
+**Returns**
+- `pendingCount`
+- `pendingHashes`
+
+---
+
+## 4. Transaction Methods
+
+### `lat_sendRawTransaction`
 Submits a signed transaction.
 
-**Parameters**:
-1. `data`: `string` - Signed transaction data (hex)
+**Params**
+1. hex-encoded signed transaction bytes
 
-**Returns**: `string` - Transaction hash
-
-**Example**:
-```json
-// Request
-{"jsonrpc":"2.0","method":"lat_sendRawTransaction","params":["0xf86c..."],"id":1}
-
-// Response
-{"jsonrpc":"2.0","id":1,"result":"0x...txhash..."}
-```
-
-#### `lat_getTransactionByHash`
-
-Returns transaction by hash.
-
-**Parameters**:
-1. `txHash`: `string` - Transaction hash
-
-**Returns**: `object` - Transaction object or `null`
-
-#### `lat_getTransactionReceipt`
-
-Returns transaction receipt.
-
-**Parameters**:
-1. `txHash`: `string` - Transaction hash
-
-**Returns**: `object` - Receipt object with status, gas used, logs
+**Returns**
+- transaction hash
 
 ---
 
-### Contract Methods
+### `lat_getTransactionByHash`
+Returns a transaction object or `null`.
 
-#### `lat_call`
-
-Executes a contract call (read-only, no state changes).
-
-**Parameters**:
-1. `callObject`: `object`
-   - `to`: `string` - Contract address
-   - `data`: `string` - Encoded function call
-   - `from`: `string` (optional) - Caller address
-2. `blockNumber`: `string` - Block number or `"latest"`
-
-**Returns**: `string` - Encoded return value
-
-#### `lat_estimateGas`
-
-Estimates gas for a transaction.
-
-**Parameters**:
-1. `callObject`: `object` - Same as `lat_call`
-
-**Returns**: `string` - Estimated gas as hex
+**Params**
+1. transaction hash
 
 ---
 
-### Mining Methods
+### `lat_getTransactionReceipt`
+Returns a transaction receipt object or `null`.
 
-#### `lat_mining`
-
-Returns mining status.
-
-**Parameters**: None
-
-**Returns**: `boolean` - `true` if mining
-
-#### `lat_hashrate`
-
-Returns current hashrate.
-
-**Parameters**: None
-
-**Returns**: `string` - Hashes per second as hex
-
-#### `lat_getWork`
-
-Returns mining work template.
-
-**Parameters**: None
-
-**Returns**: `array`
-1. `headerHash`: Current block header hash
-2. `seedHash`: Seed for PoW
-3. `target`: Difficulty target
-
-#### `lat_submitWork`
-
-Submits a mining solution.
-
-**Parameters**:
-1. `nonce`: `string` - Found nonce
-2. `headerHash`: `string` - Header hash
-3. `mixDigest`: `string` - Mix digest (for verification)
-
-**Returns**: `boolean` - `true` if valid
+**Params**
+1. transaction hash
 
 ---
 
-## Error Codes
+## 5. Contract / Execution Methods
 
-| Code | Message | Description |
-|------|---------|-------------|
-| -32700 | Parse error | Invalid JSON |
-| -32600 | Invalid Request | Invalid request object |
-| -32601 | Method not found | Unknown method |
-| -32602 | Invalid params | Invalid parameters |
-| -32603 | Internal error | Server error |
-| 1 | Insufficient funds | Not enough balance |
-| 2 | Nonce too low | Transaction nonce already used |
-| 3 | Gas too low | Gas limit insufficient |
-| 4 | Invalid signature | Signature verification failed |
+### `lat_call`
+Executes a **read-only** VM-backed contract call.
+
+**Params**
+1. object with:
+   - `to`: contract address
+   - `data`: optional hex payload
+   - `from`: optional caller address
+   - `gas`: optional gas limit
+
+**Returns**
+- hex-encoded return bytes
+
+**Notes**
+- this currently uses the VM runtime in read-only mode
+- the target contract must be known to the runtime mirror
+- this is still alpha-hardening territory, not a final production contract RPC surface
 
 ---
 
-## WebSocket Subscriptions
+### `lat_estimateGas`
+Returns a simple gas estimate.
 
-Connect to `ws://localhost:8546` for real-time updates.
+**Params**
+1. call-like object
 
-#### `lat_subscribe`
+**Returns**
+- gas estimate as hex string
 
-Subscribe to events.
+---
 
-**Parameters**:
-1. `subscriptionType`: `string`
-   - `"newHeads"` - New block headers
-   - `"newPendingTransactions"` - New pending txs
-   - `"logs"` - Contract event logs
+## 6. Mining Methods
 
-**Returns**: `string` - Subscription ID
+### `lat_getWork`
+Returns a mining work template.
 
-#### `lat_unsubscribe`
+**Params**
+1. coinbase address
 
-Unsubscribe from events.
+**Returns**
+An object containing:
+- `workId`
+- `txCount`
+- `header`
+  - `version`
+  - `height`
+  - `prevHash`
+  - `txRoot`
+  - `stateRoot`
+  - `timestamp`
+  - `difficulty`
+  - `coinbase`
 
-**Parameters**:
-1. `subscriptionId`: `string`
+---
 
-**Returns**: `boolean` - Success
+### `lat_submitWork`
+Submits a mined nonce for a previously issued work template.
+
+**Params**
+1. object with:
+   - `workId`
+   - `nonce`
+   - `powHash`
+
+**Returns**
+- boolean: accepted / rejected
+
+---
+
+## 7. Error Codes
+
+| Code | Meaning |
+|---|---|
+| -32700 | parse error |
+| -32600 | invalid request |
+| -32601 | method not found |
+| -32602 | invalid params |
+| -32603 | internal error |
+| -32001 | block not found |
+| -32002 | transaction not found |
+| -32003 | invalid transaction |
+| -32004 | execution error |
+
+RPC errors may also include structured `data` for specific failure reasons.
+
+---
+
+## 8. Important Scope Notes
+
+The following are **not** currently documented here as stable features because they are not part of the current implemented JSON-RPC surface:
+- websocket subscriptions
+- `lat_chainId`
+- `lat_mining`
+- `lat_hashrate`
+
+If they are added later, they should be documented here after implementation rather than before.

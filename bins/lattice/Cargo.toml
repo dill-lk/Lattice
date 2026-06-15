@@ -22,6 +22,9 @@ lattice-wallet = { workspace = true }
 # Async runtime
 tokio = { workspace = true }
 
+# Networking
+libp2p = { workspace = true }
+
 # CLI
 clap = { workspace = true }
 

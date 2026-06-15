@@ -37,8 +37,8 @@ The Genesis Fee ensures sustainable development while maintaining community trus
 ### Founder Wallet
 
 ```
-Address: 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft
-Keystore ID: 7e73a394-12e4-4f41-816f-558c214d8a78
+Address: 1FDG9t5ar77bddgn6bQRfXeBUmTZ69xrdq
+Keystore ID: generated locally / not fixed in repository source
 ```
 
 ### Vesting Schedule
@@ -160,7 +160,7 @@ You can verify the genesis allocation and vesting using:
 
 ```bash
 # Check founder balance
-lattice wallet balance 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft
+lattice wallet balance 1FDG9t5ar77bddgn6bQRfXeBUmTZ69xrdq
 
 # View genesis block
 lattice query block 0

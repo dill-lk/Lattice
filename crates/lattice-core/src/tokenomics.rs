@@ -59,8 +59,8 @@ pub const BLOCKS_PER_YEAR: u64 = BLOCKS_PER_DAY * 365;
 // ============================================================================
 
 /// Founder/Developer wallet address (Base58 encoded)
-/// Address: 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft
-pub const FOUNDER_WALLET_ADDRESS: &str = "13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft";
+/// Address: 1FDG9t5ar77bddgn6bQRfXeBUmTZ69xrdq
+pub const FOUNDER_WALLET_ADDRESS: &str = "1FDG9t5ar77bddgn6bQRfXeBUmTZ69xrdq";
 
 /// Total developer genesis allocation: 2,500,000 LAT (5% of total supply)
 pub const TOTAL_GENESIS_ALLOCATION: Amount = 2_500_000 * LATT_PER_LAT;

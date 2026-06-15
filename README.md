@@ -90,7 +90,7 @@ This installs the official unified executable:
 
 ```bash
 lattice wallet create
-# Output: Address: 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft
+# Output: Address: 1FDG9t5ar77bddgn6bQRfXeBUmTZ69xrdq
 ```
 
 ### Start Mining
@@ -163,7 +163,7 @@ The miner shows real-time stats:
 ╠═══════════════════════════════════════════════════════════╣
 ║  Network : DEVNET                                         ║
 ║  Threads : 8                                              ║
-║  Coinbase: 13jXqXbCSghDF2KgyFQdtw8SvbJvpEyhft             ║
+║  Coinbase: 1FDG9t5ar77bddgn6bQRfXeBUmTZ69xrdq             ║
 ║  Node RPC: http://127.0.0.1:8545                          ║
 ╚═══════════════════════════════════════════════════════════╝
 

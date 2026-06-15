@@ -795,8 +795,8 @@ mod tests {
 
         let wasm = wat::parse_str(
             r#"(module
-                (func (export \"init\"))
-                (func (export \"call\"))
+                (func (export "init"))
+                (func (export "call"))
             )"#,
         )
         .unwrap();

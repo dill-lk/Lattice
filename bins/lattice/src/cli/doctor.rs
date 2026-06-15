@@ -7,7 +7,7 @@ use colored::Colorize;
 use dialoguer::{Confirm, Input, Select};
 use lattice_wallet::Keystore;
 
-use crate::node::config::{NodeConfig, parse_network};
+use crate::node::config::{parse_network, MiningConfig, NodeConfig, P2pConfig, RpcConfig};
 
 use crate::cli::formatter;
 use crate::cli::output;
@@ -47,7 +47,9 @@ pub async fn run_doctor(rpc_url: &str) -> Result<()> {
 
     formatter::title("Lattice Doctor");
     formatter::divider();
-    formatter::note("This checks the current workspace wallet, RPC reachability, and data directory basics.");
+    formatter::note(
+        "This checks the current workspace wallet, RPC reachability, and data directory basics.",
+    );
     if output::verbose_enabled() {
         formatter::note("Verbose mode is enabled, so setup hints are expanded.");
     }
@@ -62,7 +64,9 @@ pub async fn run_doctor(rpc_url: &str) -> Result<()> {
 
     formatter::subheader("Recommendations");
     formatter::note("If no wallet exists, run `lattice --wallet-new`.");
-    formatter::note("If RPC is offline, start a node with `lattice --node` or mine with `lattice --mine 4`.");
+    formatter::note(
+        "If RPC is offline, start a node with `lattice --node` or mine with `lattice --mine 4`.",
+    );
     formatter::note("For advanced checks, use `lattice status`, `lattice peers`, and `lattice query block latest`.");
     if output::verbose_enabled() {
         formatter::note("If you prefer explicit control, use `lattice node ...` and `lattice miner ...` separately.");
@@ -255,15 +259,26 @@ pub fn run_config_wizard(path: &str) -> Result<()> {
         None
     };
 
-    let mut config = NodeConfig::default();
-    config.network = parse_network(network_name)?;
-    config.data_dir = std::path::PathBuf::from(data_dir);
-    config.rpc.host = rpc_host;
-    config.rpc.port = rpc_port;
-    config.p2p.listen_addr.set_port(p2p_port);
-    config.mining.enabled = enable_mining;
-    config.mining.threads = mining_threads;
-    config.mining.coinbase = coinbase;
+    let mut p2p = P2pConfig::default();
+    p2p.listen_addr.set_port(p2p_port);
+
+    let config = NodeConfig {
+        network: parse_network(network_name)?,
+        data_dir: std::path::PathBuf::from(data_dir),
+        rpc: RpcConfig {
+            host: rpc_host,
+            port: rpc_port,
+            ..Default::default()
+        },
+        p2p,
+        mining: MiningConfig {
+            enabled: enable_mining,
+            threads: mining_threads,
+            coinbase,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     let output_path = std::path::PathBuf::from(path);
     if let Some(parent) = output_path.parent() {
@@ -292,7 +307,14 @@ pub fn run_config_wizard(path: &str) -> Result<()> {
     formatter::key_value("Network", network_name);
     formatter::key_value("RPC", &format!("{}:{}", config.rpc.host, config.rpc.port));
     formatter::key_value("P2P", &config.p2p.listen_addr.to_string());
-    formatter::key_value("Mining", if config.mining.enabled { "enabled" } else { "disabled" });
+    formatter::key_value(
+        "Mining",
+        if config.mining.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        },
+    );
     println!();
     Ok(())
 }

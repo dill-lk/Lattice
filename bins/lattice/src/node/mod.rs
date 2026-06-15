@@ -993,7 +993,7 @@ fn build_pooled_transactions_response(state: &NodeState, hashes: Vec<Hash>) -> S
     SyncResponse::PooledTransactions(txs)
 }
 
-fn dispatch_sync_requests<B>(
+fn dispatch_sync_requests(
     behaviour: &mut NetworkBehavior,
     sync: &ChainSync,
     requests: Vec<(PeerId, SyncRequest)>,

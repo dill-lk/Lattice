@@ -134,11 +134,7 @@ jobs:
             artifact_name: lattice-windows-amd64
             archive_ext: zip
             macos_deployment_target: ""
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: lattice-macos-amd64
-            archive_ext: tar.gz
-            macos_deployment_target: "13.0"
+         
     steps:
       - uses: actions/checkout@v4
 

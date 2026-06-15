@@ -1,0 +1,65 @@
+name: Lattice Workspace Only
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  lattice-only:
+    name: Check and test Lattice crates only
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo git sources
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build outputs
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-lattice-only-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: List Lattice workspace packages
+        run: |
+          cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[].name | select(. == "lattice" or startswith("lattice-"))' \
+            | tee lattice-packages.txt
+
+      - name: Clippy Lattice packages without dependency lint targets
+        run: |
+          set -euo pipefail
+          while IFS= read -r package; do
+            cargo clippy -p "$package" --all-targets --all-features --no-deps -- -D warnings
+          done < lattice-packages.txt
+
+      - name: Test Lattice packages only
+        run: |
+          set -euo pipefail
+          while IFS= read -r package; do
+            cargo test -p "$package" --all-features --no-fail-fast
+          done < lattice-packages.txt

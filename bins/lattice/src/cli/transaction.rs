@@ -32,7 +32,10 @@ pub async fn send_transaction(
     formatter::key_value("RPC", rpc_url);
 
     let client = RpcClient::new(rpc_url);
-    let nonce = match client.get_transaction_count(&sender_address.to_base58()).await {
+    let nonce = match client
+        .get_transaction_count(&sender_address.to_base58())
+        .await
+    {
         Ok(value) => value,
         Err(_) => {
             formatter::warning("Could not fetch nonce from RPC. Falling back to 0.");
@@ -174,7 +177,10 @@ pub async fn broadcast_transaction(raw_hex: &str, rpc_url: &str) -> Result<()> {
     formatter::title("Broadcast Raw Transaction");
     formatter::divider();
     formatter::key_value("RPC", rpc_url);
-    formatter::key_value("Payload Size", &format!("{} bytes", hex_clean.trim_start_matches("0x").len() / 2));
+    formatter::key_value(
+        "Payload Size",
+        &format!("{} bytes", hex_clean.trim_start_matches("0x").len() / 2),
+    );
     formatter::info("Submitting raw transaction to node…");
 
     match client.send_raw_transaction(&hex_clean).await {
@@ -230,7 +236,10 @@ pub async fn deploy_contract(
     formatter::key_value("RPC", rpc_url);
 
     let client = RpcClient::new(rpc_url);
-    let nonce = client.get_transaction_count(&sender_address.to_base58()).await.unwrap_or(0);
+    let nonce = client
+        .get_transaction_count(&sender_address.to_base58())
+        .await
+        .unwrap_or(0);
     account.set_nonce(nonce);
 
     let mut builder = TransactionBuilder::deploy()
@@ -263,7 +272,9 @@ pub async fn deploy_contract(
             }
             formatter::success("Deployment transaction submitted.");
             formatter::key_value("Transaction Hash", &hash);
-            formatter::note("Use `lattice tx status <hash>` to track confirmation and receipt status.");
+            formatter::note(
+                "Use `lattice tx status <hash>` to track confirmation and receipt status.",
+            );
         }
         Err(e) => {
             if output::json_enabled() {
@@ -281,17 +292,31 @@ pub async fn deploy_contract(
     Ok(())
 }
 
+/// Options for calling a smart contract method.
+pub struct CallContractOptions<'a> {
+    pub wallet_path: &'a str,
+    pub contract_addr: &'a str,
+    pub method: &'a str,
+    pub args_hex: Option<&'a str>,
+    pub amount: u128,
+    pub fee: u128,
+    pub gas_limit: Option<u64>,
+    pub rpc_url: &'a str,
+}
+
 /// Call a smart contract method.
-pub async fn call_contract(
-    wallet_path: &str,
-    contract_addr: &str,
-    method: &str,
-    args_hex: Option<&str>,
-    amount: u128,
-    fee: u128,
-    gas_limit: Option<u64>,
-    rpc_url: &str,
-) -> Result<()> {
+pub async fn call_contract(options: CallContractOptions<'_>) -> Result<()> {
+    let CallContractOptions {
+        wallet_path,
+        contract_addr,
+        method,
+        args_hex,
+        amount,
+        fee,
+        gas_limit,
+        rpc_url,
+    } = options;
+
     let contract =
         Address::from_base58(contract_addr).map_err(|_| anyhow!("Invalid contract address"))?;
     let mut account = load_wallet(wallet_path)?;
@@ -318,7 +343,10 @@ pub async fn call_contract(
     formatter::key_value("Payload", &format!("{} bytes", payload.len()));
 
     let client = RpcClient::new(rpc_url);
-    let nonce = client.get_transaction_count(&sender_address.to_base58()).await.unwrap_or(0);
+    let nonce = client
+        .get_transaction_count(&sender_address.to_base58())
+        .await
+        .unwrap_or(0);
     account.set_nonce(nonce);
 
     let mut builder = TransactionBuilder::call()
@@ -465,11 +493,11 @@ pub async fn check_status(hash: &str, rpc_url: &str) -> Result<()> {
 
 /// Decode a raw transaction.
 pub fn decode_transaction(raw_tx: &str) -> Result<()> {
-    let tx_bytes =
-        hex::decode(raw_tx.trim_start_matches("0x")).map_err(|_| anyhow!("Invalid hex encoding"))?;
+    let tx_bytes = hex::decode(raw_tx.trim_start_matches("0x"))
+        .map_err(|_| anyhow!("Invalid hex encoding"))?;
 
-    let tx: Transaction = borsh::from_slice(&tx_bytes)
-        .map_err(|e| anyhow!("Failed to decode transaction: {e}"))?;
+    let tx: Transaction =
+        borsh::from_slice(&tx_bytes).map_err(|e| anyhow!("Failed to decode transaction: {e}"))?;
 
     if output::json_enabled() {
         return output::emit_json(serde_json::json!({

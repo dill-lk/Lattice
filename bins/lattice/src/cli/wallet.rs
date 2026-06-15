@@ -335,7 +335,7 @@ pub fn show_address(wallet_path: &str) -> Result<()> {
 
     formatter::title("Wallet Address");
     formatter::divider();
-    formatter::key_value("Address", &keystore.address().to_string());
+    formatter::key_value("Address", keystore.address());
     formatter::key_value("Keystore ID", keystore.id());
     formatter::key_value("File", wallet_path);
     println!();
@@ -352,7 +352,11 @@ pub fn list_wallets() -> Result<()> {
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "json") {
                 if let Ok(keystore) = Keystore::load_from_file(&path) {
-                    let file = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let file = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
                     rows.push(serde_json::json!({
                         "file": file,
                         "address": keystore.address(),
@@ -380,10 +384,27 @@ pub fn list_wallets() -> Result<()> {
 
     for row in &rows {
         formatter::table_row(&[
-            if row.get("default").and_then(|v| v.as_bool()).unwrap_or(false) { "yes".to_string() } else { "".to_string() },
-            row.get("file").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-            row.get("address").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-            row.get("keystore_id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            if row
+                .get("default")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                "yes".to_string()
+            } else {
+                "".to_string()
+            },
+            row.get("file")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            row.get("address")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            row.get("keystore_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
         ]);
     }
 
@@ -494,8 +515,8 @@ pub async fn show_nonce(address_or_wallet: &str, rpc_url: &str) -> Result<()> {
 /// Query wallet balance via RPC.
 pub async fn show_balance(address_or_wallet: &str, rpc_url: &str) -> Result<()> {
     use lattice_core::tokenomics::{
-        BLOCKS_PER_MONTH, FOUNDER_IMMEDIATE_AMOUNT, FOUNDER_VESTING_AMOUNT,
-        FOUNDER_WALLET_ADDRESS, LATT_PER_LAT, TOKEN_SYMBOL, VESTING_DURATION_MONTHS,
+        BLOCKS_PER_MONTH, FOUNDER_IMMEDIATE_AMOUNT, FOUNDER_VESTING_AMOUNT, FOUNDER_WALLET_ADDRESS,
+        LATT_PER_LAT, TOKEN_SYMBOL, VESTING_DURATION_MONTHS,
     };
 
     let client = RpcClient::new(rpc_url);
@@ -513,8 +534,7 @@ pub async fn show_balance(address_or_wallet: &str, rpc_url: &str) -> Result<()> 
             let vested_amount = if months_elapsed >= VESTING_DURATION_MONTHS {
                 FOUNDER_VESTING_AMOUNT
             } else {
-                (FOUNDER_VESTING_AMOUNT * months_elapsed as u128)
-                    / VESTING_DURATION_MONTHS as u128
+                (FOUNDER_VESTING_AMOUNT * months_elapsed as u128) / VESTING_DURATION_MONTHS as u128
             };
             let locked_amount = FOUNDER_VESTING_AMOUNT.saturating_sub(vested_amount);
             let monthly_release = FOUNDER_VESTING_AMOUNT / VESTING_DURATION_MONTHS as u128;
@@ -632,7 +652,10 @@ fn format_with_commas(n: u128) -> String {
 }
 
 fn default_wallet_config_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|home| home.join(DEFAULT_WALLET_CONFIG_DIR).join(DEFAULT_WALLET_CONFIG_FILE))
+    dirs::home_dir().map(|home| {
+        home.join(DEFAULT_WALLET_CONFIG_DIR)
+            .join(DEFAULT_WALLET_CONFIG_FILE)
+    })
 }
 
 fn resolve_address_input(address_or_wallet: &str) -> Result<String> {

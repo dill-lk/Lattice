@@ -33,7 +33,7 @@ mod server;
 mod types;
 
 pub use error::{Error, ErrorCode, Result, RpcError};
-pub use handlers::{ChainState, RpcHandlers};
+pub use handlers::{ChainState, PeerSnapshot, RpcHandlers};
 pub use server::{RpcConfig, RpcServer};
 pub use types::{
     BlockNumber, BlockTag, CallRequest, RpcBlock, RpcRequest, RpcResponse, RpcTransaction,

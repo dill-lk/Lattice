@@ -341,17 +341,23 @@ pub async fn run_cli(command: CliCommands, rpc_url: &str) -> anyhow::Result<()> 
                     wallet::import_from_mnemonic(&phrase, &output)?;
                 }
             },
-            WalletCommands::Export { wallet: wallet_path } => {
+            WalletCommands::Export {
+                wallet: wallet_path,
+            } => {
                 wallet::export_private_key(&wallet_path)?;
             }
-            WalletCommands::Address { wallet: wallet_path } => {
+            WalletCommands::Address {
+                wallet: wallet_path,
+            } => {
                 wallet::show_address(&wallet_path)?;
             }
             WalletCommands::Default { action } => match action {
                 DefaultWalletCommands::Show => {
                     wallet::show_default_wallet()?;
                 }
-                DefaultWalletCommands::Set { wallet: wallet_path } => {
+                DefaultWalletCommands::Set {
+                    wallet: wallet_path,
+                } => {
                     wallet::set_default_wallet(&wallet_path)?;
                 }
             },
@@ -370,7 +376,9 @@ pub async fn run_cli(command: CliCommands, rpc_url: &str) -> anyhow::Result<()> 
             WalletCommands::List => {
                 wallet::list_wallets()?;
             }
-            WalletCommands::Delete { wallet: wallet_path } => {
+            WalletCommands::Delete {
+                wallet: wallet_path,
+            } => {
                 wallet::delete_wallet(&wallet_path)?;
             }
         },
@@ -439,7 +447,8 @@ pub async fn run_cli(command: CliCommands, rpc_url: &str) -> anyhow::Result<()> 
                 wallet: wallet_path,
             } => {
                 let fee_latt = parse_amount(&fee, false)?;
-                transaction::deploy_contract(&wallet_path, &wasm, fee_latt, gas_limit, rpc_url).await?;
+                transaction::deploy_contract(&wallet_path, &wasm, fee_latt, gas_limit, rpc_url)
+                    .await?;
             }
             ContractCommands::Call {
                 address,
@@ -452,16 +461,16 @@ pub async fn run_cli(command: CliCommands, rpc_url: &str) -> anyhow::Result<()> 
             } => {
                 let amount_latt = parse_amount(&amount, false)?;
                 let fee_latt = parse_amount(&fee, false)?;
-                transaction::call_contract(
-                    &wallet_path,
-                    &address,
-                    &method,
-                    args.as_deref(),
-                    amount_latt,
-                    fee_latt,
+                transaction::call_contract(transaction::CallContractOptions {
+                    wallet_path: &wallet_path,
+                    contract_addr: &address,
+                    method: &method,
+                    args_hex: args.as_deref(),
+                    amount: amount_latt,
+                    fee: fee_latt,
                     gas_limit,
                     rpc_url,
-                )
+                })
                 .await?;
             }
         },

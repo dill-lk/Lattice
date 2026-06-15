@@ -120,7 +120,6 @@ pub async fn run_miner(args: MinerArgs, rpc_url: &str) -> Result<()> {
         tx
     };
 
-    let current_height = Arc::new(AtomicU64::new(0));
     let rpc_client = Arc::new(RpcClient::new(rpc_url).context("Failed to create RPC client")?);
     let stats = MiningStats::new();
     let state = MinerState::new();

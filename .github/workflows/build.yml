@@ -128,14 +128,17 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact_name: lattice-linux-amd64
             archive_ext: tar.gz
+            macos_deployment_target: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: lattice-windows-amd64
             archive_ext: zip
+            macos_deployment_target: ""
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: lattice-macos-amd64
             archive_ext: tar.gz
+            macos_deployment_target: "13.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -151,7 +154,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.target }}-release-${{ matrix.macos_deployment_target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Set macOS deployment target
+        if: runner.os == 'macOS'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos_deployment_target }}" >> "$GITHUB_ENV"
 
       - name: Build official unified binary
         run: cargo build --release --target ${{ matrix.target }} --bin lattice
